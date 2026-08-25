@@ -1,0 +1,12 @@
+fileFormatVersion: 2
+guid: 4cb066cf20bc70d4c884bdd98292d6ce
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - handLandmarkAsset: {fileID: 5022602860645237092, guid: 585320b4355db3343833456d67dca15e, type: 3}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

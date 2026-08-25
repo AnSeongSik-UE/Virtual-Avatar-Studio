@@ -1,0 +1,13 @@
+fileFormatVersion: 2
+guid: 2bba40aecd6c3cb4f92aee713a48a41f
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - poseDetectorAsset: {fileID: 5022602860645237092, guid: 7126720ac3de8f64a937a551a64ee90b, type: 3}
+  - poseAnchorsCSV: {fileID: 4900000, guid: a3fff87aa9cd3144eafec444225c948c, type: 3}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

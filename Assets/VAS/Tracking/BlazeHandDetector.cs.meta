@@ -1,0 +1,13 @@
+fileFormatVersion: 2
+guid: f8936c134327f9f47b4ca9d85aafb24b
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - handDetectorAsset: {fileID: 5022602860645237092, guid: 6c5b05c10d6c2ca4cb603381f796d80a, type: 3}
+  - handAnchorsCSV: {fileID: 4900000, guid: 54e3e162baa6824418ee2ecea9f0d093, type: 3}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

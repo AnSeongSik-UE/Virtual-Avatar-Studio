@@ -1,0 +1,13 @@
+fileFormatVersion: 2
+guid: 0eea9bb9fc9eb4a4fb463f371bcb8034
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - blazeFaceModelAsset: {fileID: 5022602860645237092, guid: 9deea7b673790584fa6984d8cfd7bd57, type: 3}
+  - faceAnchorsCSV: {fileID: 4900000, guid: b132fd059a657ec4fbb7a12db06a59fa, type: 3}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

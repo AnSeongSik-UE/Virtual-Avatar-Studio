@@ -1,0 +1,12 @@
+fileFormatVersion: 2
+guid: 9118bcc21f066ac42a02d1d17ce31229
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - poseLandmarkAsset: {fileID: 5022602860645237092, guid: 3303217b8f387bc4d971c5f309ccad2f, type: 3}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
