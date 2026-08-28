@@ -273,6 +273,11 @@ namespace UniVRM10
 
         #endregion
 
+        public static void DisposeFastSpringBoneResourcesForEditorReload()
+        {
+            FastSpringBones.FastSpringBoneService.DisposeResourcesForEditorReload();
+        }
+
         public bool TryGetRadiusAsTail(VRM10SpringBoneJoint target, out float? radius)
         {
             foreach (var spring in SpringBone.Springs)

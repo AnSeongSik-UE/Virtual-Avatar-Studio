@@ -67,11 +67,19 @@ public class BlazePoseDetector : MonoBehaviour
 
         if (t0 == null || t1 == null || t2 == null) return new PoseDetection { IsValid = false };
 
+        var idxAw   = t0.ReadbackAndCloneAsync();
+        var scoreAw = t1.ReadbackAndCloneAsync();
+        var boxAw   = t2.ReadbackAndCloneAsync();
+
+        Tensor<int> outputIdx = null;
+        Tensor<float> outputScore = null;
+        Tensor<float> outputBox = null;
+
         try
         {
-            using var outputIdx   = await t0.ReadbackAndCloneAsync();
-            using var outputScore = await t1.ReadbackAndCloneAsync();
-            using var outputBox   = await t2.ReadbackAndCloneAsync();
+            outputIdx   = await idxAw;
+            outputScore = await scoreAw;
+            outputBox   = await boxAw;
 
             if (outputIdx == null || outputScore == null || outputBox == null || outputScore.shape.length == 0)
                 return new PoseDetection { IsValid = false };
@@ -95,6 +103,12 @@ public class BlazePoseDetector : MonoBehaviour
         catch (NullReferenceException) when (_disposed || !Application.isPlaying)
         {
             return new PoseDetection { IsValid = false };
+        }
+        finally
+        {
+            outputIdx?.Dispose();
+            outputScore?.Dispose();
+            outputBox?.Dispose();
         }
     }
 

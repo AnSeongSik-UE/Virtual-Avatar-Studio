@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UniVRM10;
 using UnityEngine;
 
@@ -21,7 +22,8 @@ public sealed class VRMMapper : MonoBehaviour
         public float RightTestAngle;
     }
 
-    private const string ConfigKeyPrefix = "VAS.ArmMapping.";
+    private const string LegacyConfigKeyPrefix = "VAS.ArmMapping.";
+    private const string AvatarConfigKeyRoot = "VAS.ArmMapping.Avatar.";
 
     [SerializeField] private Vrm10Instance vrmInstance;
     [SerializeField] private Animator vrmAnimator;
@@ -68,6 +70,7 @@ public sealed class VRMMapper : MonoBehaviour
     private float _rightOutputAngle;
     private bool _configDirty;
     private float _configSaveTime;
+    private string _configKeyPrefix = LegacyConfigKeyPrefix;
     private readonly float[] _currentBlendShapes = new float[52];
     private readonly float[] _neutralBlendShapes = new float[52];
 
@@ -87,27 +90,34 @@ public sealed class VRMMapper : MonoBehaviour
 
     private void Start()
     {
-        if (!_initialized) Initialize(vrmInstance, vrmAnimator);
+        if (!_initialized) Initialize(vrmInstance, vrmAnimator, string.Empty, false);
     }
 
-    public void Initialize(Vrm10Instance instance, Animator animator)
+    public bool Initialize(
+        Vrm10Instance instance,
+        Animator animator,
+        string avatarId = "",
+        bool useLegacyConfigAsInitial = false)
     {
+        _initialized = false;
         vrmInstance = instance != null ? instance : GetComponent<Vrm10Instance>();
         vrmAnimator = animator != null ? animator : GetComponent<Animator>();
-        if (vrmAnimator == null) return;
+        if (vrmAnimator == null) return false;
 
         _leftArm = vrmAnimator.GetBoneTransform(HumanBodyBones.LeftUpperArm);
         _rightArm = vrmAnimator.GetBoneTransform(HumanBodyBones.RightUpperArm);
         _neck = vrmAnimator.GetBoneTransform(HumanBodyBones.Neck);
-        if (_leftArm == null || _rightArm == null || _neck == null) return;
+        if (_leftArm == null || _rightArm == null || _neck == null) return false;
 
         _initialLeftArm = _leftArm.localRotation;
         _initialRightArm = _rightArm.localRotation;
         _initialNeck = _neck.localRotation;
-        LoadArmConfig();
+        _configKeyPrefix = BuildAvatarConfigKeyPrefix(avatarId);
+        LoadArmConfig(useLegacyConfigAsInitial ? LegacyConfigKeyPrefix : _configKeyPrefix);
         RebuildNeutralArmRotations();
         _initialized = true;
         Debug.Log("[VRMMapper] Avatar bones initialized.");
+        return true;
     }
 
     public ArmMappingConfig GetArmConfig()
@@ -152,6 +162,28 @@ public sealed class VRMMapper : MonoBehaviour
     public void ResetArmConfig()
     {
         SetArmConfig(DefaultArmConfig());
+    }
+
+    public void PersistCurrentConfig()
+    {
+        if (!_initialized) return;
+        _configDirty = true;
+        _configSaveTime = 0f;
+        SaveConfigIfDue();
+    }
+
+    public void FlushConfig()
+    {
+        if (!_configDirty) return;
+        _configSaveTime = 0f;
+        SaveConfigIfDue();
+    }
+
+    public static void DeleteSavedConfig(string avatarId)
+    {
+        string prefix = BuildAvatarConfigKeyPrefix(avatarId);
+        foreach (string suffix in ConfigKeySuffixes()) PlayerPrefs.DeleteKey(prefix + suffix);
+        PlayerPrefs.Save();
     }
 
     public void Apply(TrackingPacket packet, bool calibrationFrameReady = true)
@@ -329,22 +361,22 @@ public sealed class VRMMapper : MonoBehaviour
         };
     }
 
-    private void LoadArmConfig()
+    private void LoadArmConfig(string prefix)
     {
         ArmMappingConfig defaults = DefaultArmConfig();
-        swapArms = PlayerPrefs.GetInt(ConfigKeyPrefix + "Swap", defaults.SwapArms ? 1 : 0) != 0;
-        leftInvert = PlayerPrefs.GetInt(ConfigKeyPrefix + "LeftInvert", defaults.LeftInvert ? 1 : 0) != 0;
-        rightInvert = PlayerPrefs.GetInt(ConfigKeyPrefix + "RightInvert", defaults.RightInvert ? 1 : 0) != 0;
+        swapArms = PlayerPrefs.GetInt(prefix + "Swap", defaults.SwapArms ? 1 : 0) != 0;
+        leftInvert = PlayerPrefs.GetInt(prefix + "LeftInvert", defaults.LeftInvert ? 1 : 0) != 0;
+        rightInvert = PlayerPrefs.GetInt(prefix + "RightInvert", defaults.RightInvert ? 1 : 0) != 0;
         armTestMode = false;
-        leftNeutralAngle = PlayerPrefs.GetFloat(ConfigKeyPrefix + "LeftNeutral", defaults.LeftNeutralAngle);
-        rightNeutralAngle = PlayerPrefs.GetFloat(ConfigKeyPrefix + "RightNeutral", defaults.RightNeutralAngle);
-        leftGain = PlayerPrefs.GetFloat(ConfigKeyPrefix + "LeftGain", defaults.LeftGain);
-        rightGain = PlayerPrefs.GetFloat(ConfigKeyPrefix + "RightGain", defaults.RightGain);
-        maxArmAngle = PlayerPrefs.GetFloat(ConfigKeyPrefix + "MaxAngle", defaults.MaxAngle);
-        inputSmoothing = PlayerPrefs.GetFloat(ConfigKeyPrefix + "InputSmoothing", defaults.InputSmoothing);
-        maxInputJump = PlayerPrefs.GetFloat(ConfigKeyPrefix + "MaxInputJump", defaults.MaxInputJump);
-        leftTestAngle = PlayerPrefs.GetFloat(ConfigKeyPrefix + "LeftTest", leftNeutralAngle);
-        rightTestAngle = PlayerPrefs.GetFloat(ConfigKeyPrefix + "RightTest", rightNeutralAngle);
+        leftNeutralAngle = PlayerPrefs.GetFloat(prefix + "LeftNeutral", defaults.LeftNeutralAngle);
+        rightNeutralAngle = PlayerPrefs.GetFloat(prefix + "RightNeutral", defaults.RightNeutralAngle);
+        leftGain = PlayerPrefs.GetFloat(prefix + "LeftGain", defaults.LeftGain);
+        rightGain = PlayerPrefs.GetFloat(prefix + "RightGain", defaults.RightGain);
+        maxArmAngle = PlayerPrefs.GetFloat(prefix + "MaxAngle", defaults.MaxAngle);
+        inputSmoothing = PlayerPrefs.GetFloat(prefix + "InputSmoothing", defaults.InputSmoothing);
+        maxInputJump = PlayerPrefs.GetFloat(prefix + "MaxInputJump", defaults.MaxInputJump);
+        leftTestAngle = PlayerPrefs.GetFloat(prefix + "LeftTest", leftNeutralAngle);
+        rightTestAngle = PlayerPrefs.GetFloat(prefix + "RightTest", rightNeutralAngle);
     }
 
     private void QueueConfigSave()
@@ -357,30 +389,50 @@ public sealed class VRMMapper : MonoBehaviour
     {
         if (!_configDirty || Time.unscaledTime < _configSaveTime) return;
 
-        PlayerPrefs.SetInt(ConfigKeyPrefix + "Swap", swapArms ? 1 : 0);
-        PlayerPrefs.SetInt(ConfigKeyPrefix + "LeftInvert", leftInvert ? 1 : 0);
-        PlayerPrefs.SetInt(ConfigKeyPrefix + "RightInvert", rightInvert ? 1 : 0);
-        PlayerPrefs.SetFloat(ConfigKeyPrefix + "LeftNeutral", leftNeutralAngle);
-        PlayerPrefs.SetFloat(ConfigKeyPrefix + "RightNeutral", rightNeutralAngle);
-        PlayerPrefs.SetFloat(ConfigKeyPrefix + "LeftGain", leftGain);
-        PlayerPrefs.SetFloat(ConfigKeyPrefix + "RightGain", rightGain);
-        PlayerPrefs.SetFloat(ConfigKeyPrefix + "MaxAngle", maxArmAngle);
-        PlayerPrefs.SetFloat(ConfigKeyPrefix + "InputSmoothing", inputSmoothing);
-        PlayerPrefs.SetFloat(ConfigKeyPrefix + "MaxInputJump", maxInputJump);
-        PlayerPrefs.SetFloat(ConfigKeyPrefix + "LeftTest", leftTestAngle);
-        PlayerPrefs.SetFloat(ConfigKeyPrefix + "RightTest", rightTestAngle);
+        PlayerPrefs.SetInt(_configKeyPrefix + "Swap", swapArms ? 1 : 0);
+        PlayerPrefs.SetInt(_configKeyPrefix + "LeftInvert", leftInvert ? 1 : 0);
+        PlayerPrefs.SetInt(_configKeyPrefix + "RightInvert", rightInvert ? 1 : 0);
+        PlayerPrefs.SetFloat(_configKeyPrefix + "LeftNeutral", leftNeutralAngle);
+        PlayerPrefs.SetFloat(_configKeyPrefix + "RightNeutral", rightNeutralAngle);
+        PlayerPrefs.SetFloat(_configKeyPrefix + "LeftGain", leftGain);
+        PlayerPrefs.SetFloat(_configKeyPrefix + "RightGain", rightGain);
+        PlayerPrefs.SetFloat(_configKeyPrefix + "MaxAngle", maxArmAngle);
+        PlayerPrefs.SetFloat(_configKeyPrefix + "InputSmoothing", inputSmoothing);
+        PlayerPrefs.SetFloat(_configKeyPrefix + "MaxInputJump", maxInputJump);
+        PlayerPrefs.SetFloat(_configKeyPrefix + "LeftTest", leftTestAngle);
+        PlayerPrefs.SetFloat(_configKeyPrefix + "RightTest", rightTestAngle);
         PlayerPrefs.Save();
         _configDirty = false;
     }
 
+    private static string BuildAvatarConfigKeyPrefix(string avatarId)
+    {
+        if (string.IsNullOrEmpty(avatarId)) return LegacyConfigKeyPrefix;
+        return AvatarConfigKeyRoot + avatarId.ToLowerInvariant() + ".";
+    }
+
+    private static IEnumerable<string> ConfigKeySuffixes()
+    {
+        yield return "Swap";
+        yield return "LeftInvert";
+        yield return "RightInvert";
+        yield return "LeftNeutral";
+        yield return "RightNeutral";
+        yield return "LeftGain";
+        yield return "RightGain";
+        yield return "MaxAngle";
+        yield return "InputSmoothing";
+        yield return "MaxInputJump";
+        yield return "LeftTest";
+        yield return "RightTest";
+    }
+
     private void OnApplicationQuit()
     {
-        if (_configDirty)
-        {
-            _configSaveTime = 0f;
-            SaveConfigIfDue();
-        }
+        FlushConfig();
     }
+
+    private void OnDisable() => FlushConfig();
 
     private float SmoothingFactor()
     {

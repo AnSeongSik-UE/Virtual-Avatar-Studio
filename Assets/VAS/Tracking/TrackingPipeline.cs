@@ -5,6 +5,7 @@ using System.Collections.Generic;
 
 public class TrackingPipeline : MonoBehaviour
 {
+    private const float CalibrationTrackingWaitSeconds = 15f;
     public struct ArmValidationSample
     {
         public bool PoseTracked;
@@ -63,6 +64,21 @@ public class TrackingPipeline : MonoBehaviour
     private bool _renderAverageReady;
     private bool _inferenceAverageReady;
     private bool _inferenceUpdateAverageReady;
+    private bool _performanceSessionActive;
+    private bool _performanceSummaryLogged;
+    private UpdateRateMetric _faceDetectorRate;
+    private UpdateRateMetric _poseDetectorRate;
+    private UpdateRateMetric _poseLandmarkerRate;
+    private UpdateRateMetric _poseApplicationRate;
+
+    private struct UpdateRateMetric
+    {
+        public float InstantIntervalMs;
+        public float AverageIntervalMs;
+        public double LastCompletionTime;
+        public int WarmupRemaining;
+        public bool AverageReady;
+    }
 
     // Tracking points storage for persistent rendering
     private Vector2[] _facePoints = new Vector2[6];
@@ -209,6 +225,7 @@ public class TrackingPipeline : MonoBehaviour
             try 
             {
                 _inferenceBusy = true;
+                int inferenceStartFrame = Time.frameCount;
                 float startTime = Time.realtimeSinceStartup;
 
                 if (faceDetector == null || poseDetector == null || poseLandmarker == null)
@@ -221,6 +238,7 @@ public class TrackingPipeline : MonoBehaviour
                 // 1. Face (Every frame)
                 var face = await faceDetector.DetectAsync(_cameraTexture);
                 if (_shuttingDown) return;
+                RecordUpdateRate(ref _faceDetectorRate);
                 UpdateFaceState(face);
 
                 // 2. Hand (Every frame)
@@ -255,6 +273,7 @@ public class TrackingPipeline : MonoBehaviour
                 {
                     var pose = await poseDetector.DetectAsync(_cameraTexture);
                     if (_shuttingDown) return;
+                    RecordUpdateRate(ref _poseDetectorRate);
                     await UpdatePoseState(pose);
                     if (_shuttingDown) return;
                 }
@@ -272,7 +291,8 @@ public class TrackingPipeline : MonoBehaviour
                 float duration = (Time.realtimeSinceStartup - startTime) * 1000f;
                 RecordInferenceTiming(duration);
 
-                await Awaitable.NextFrameAsync();
+                if (Time.frameCount == inferenceStartFrame)
+                    await Awaitable.NextFrameAsync();
             }
             catch (System.Exception e)
             {
@@ -355,6 +375,35 @@ public class TrackingPipeline : MonoBehaviour
             (milliseconds - _inferenceUpdateAverageMs) * InferenceAverageAlpha;
     }
 
+    private void RecordUpdateRate(ref UpdateRateMetric metric)
+    {
+        double completionTime = Time.realtimeSinceStartupAsDouble;
+        if (metric.LastCompletionTime > 0d)
+        {
+            float intervalMs = (float)((completionTime - metric.LastCompletionTime) * 1000d);
+            if (intervalMs > 0f && !float.IsNaN(intervalMs) && !float.IsInfinity(intervalMs))
+            {
+                metric.InstantIntervalMs = intervalMs;
+                if (metric.WarmupRemaining > 0)
+                {
+                    metric.WarmupRemaining--;
+                    if (metric.WarmupRemaining == 0)
+                    {
+                        metric.AverageIntervalMs = intervalMs;
+                        metric.AverageReady = true;
+                    }
+                }
+                else
+                {
+                    metric.AverageIntervalMs +=
+                        (intervalMs - metric.AverageIntervalMs) * InferenceAverageAlpha;
+                }
+            }
+        }
+
+        metric.LastCompletionTime = completionTime;
+    }
+
     private void RefreshTrackingStatus()
     {
         _statusBuilder.Clear();
@@ -368,7 +417,20 @@ public class TrackingPipeline : MonoBehaviour
             _inferenceUpdateInstantMs,
             _inferenceUpdateAverageMs,
             _inferenceUpdateAverageReady);
+        AppendUpdateRateLine("얼굴 검출", _faceDetectorRate);
+        AppendUpdateRateLine("포즈 검출", _poseDetectorRate);
+        AppendUpdateRateLine("포즈 랜드마크", _poseLandmarkerRate);
+        AppendUpdateRateLine("포즈 적용", _poseApplicationRate);
         SetTrackingStatus(_statusBuilder.ToString());
+    }
+
+    private void AppendUpdateRateLine(string label, UpdateRateMetric metric)
+    {
+        AppendFpsTimingLine(
+            label,
+            metric.InstantIntervalMs,
+            metric.AverageIntervalMs,
+            metric.AverageReady);
     }
 
     private void AppendFpsTimingLine(string label, float instantMs, float averageMs, bool averageReady)
@@ -440,7 +502,33 @@ public class TrackingPipeline : MonoBehaviour
         _renderAverageReady = false;
         _inferenceAverageReady = false;
         _inferenceUpdateAverageReady = false;
+        ResetUpdateRate(ref _faceDetectorRate);
+        ResetUpdateRate(ref _poseDetectorRate);
+        ResetUpdateRate(ref _poseLandmarkerRate);
+        ResetUpdateRate(ref _poseApplicationRate);
         _nextStatusRefreshTime = 0f;
+        _performanceSessionActive = true;
+        _performanceSummaryLogged = false;
+    }
+
+    private void LogPerformanceSummaryOnce(string reason)
+    {
+        if (!_performanceSessionActive || _performanceSummaryLogged) return;
+
+        _performanceSummaryLogged = true;
+        RefreshTrackingStatus();
+        Debug.Log(
+            $"[TrackingPerformance] 최종 성능 스냅샷 (화면 EMA), reason={reason}\n" +
+            _trackingStatusText.TrimEnd());
+        _performanceSessionActive = false;
+    }
+
+    private void ResetUpdateRate(ref UpdateRateMetric metric)
+    {
+        metric = new UpdateRateMetric
+        {
+            WarmupRemaining = InferenceWarmupSamples
+        };
     }
 
     private void UpdateFaceState(BlazeFaceDetector.FaceDetection face)
@@ -493,12 +581,14 @@ public class TrackingPipeline : MonoBehaviour
         if (pose.IsValid)
         {
             var joints = await poseLandmarker.RunAsync(_cameraTexture, pose);
+            RecordUpdateRate(ref _poseLandmarkerRate);
             if (joints != null && joints.Length >= 15)
             {
                 _lastPoseJoints = joints; // ROI 힌트용 저장
                 _calibrationPoseReady = AreCalibrationJointsVisible(joints);
                 UpdatePoseData(joints);
                 UpdateLandmarkPoints(joints, _posePoints, ref _poseTime);
+                RecordUpdateRate(ref _poseApplicationRate);
             }
             else
             {
@@ -991,12 +1081,15 @@ public class TrackingPipeline : MonoBehaviour
 
     private void OnDisable()
     {
+        LogPerformanceSummaryOnce("pipeline-disable");
         _shuttingDown = true;
         _pauseInference = true;
         _cameraTexture = null;
     }
 
     private void OnDestroy() => OnDisable();
+
+    private void OnApplicationQuit() => LogPerformanceSummaryOnce("application-quit");
 
     public async Awaitable<bool> ChangeCameraAsync(int deviceIndex, int resolutionIndex, bool mirror)
     {
@@ -1009,6 +1102,7 @@ public class TrackingPipeline : MonoBehaviour
         bool changed = await webcamManager.ChangeCameraAsync(deviceIndex, resolutionIndex, mirror);
         if (changed)
         {
+            LogPerformanceSummaryOnce("camera-change");
             _cameraTexture = webcamManager.Texture;
             ResetArmDirectionFilters();
             ResetPerformanceStatistics();
@@ -1027,6 +1121,7 @@ public class TrackingPipeline : MonoBehaviour
         while (_inferenceBusy && !_shuttingDown)
             await Awaitable.NextFrameAsync();
 
+        LogPerformanceSummaryOnce("camera-stop");
         webcamManager.StopCamera();
         _cameraTexture = null;
         _lastPoseJoints = null;
@@ -1045,11 +1140,37 @@ public class TrackingPipeline : MonoBehaviour
     }
 
     public string AvatarStatus => avatarController != null ? avatarController.Status : "아바타 컨트롤러가 없습니다.";
+    public IReadOnlyList<AvatarLibraryStore.AvatarEntry> RegisteredAvatars => avatarController != null
+        ? avatarController.Entries
+        : System.Array.Empty<AvatarLibraryStore.AvatarEntry>();
+    public string CurrentAvatarId => avatarController != null ? avatarController.CurrentAvatarId : string.Empty;
+    public string CurrentAvatarName => avatarController != null ? avatarController.CurrentAvatarName : string.Empty;
+    public int AvatarRevision => avatarController != null ? avatarController.AvatarRevision : 0;
+    public bool IsAvatarBusy => avatarController != null && avatarController.IsBusy;
+    public bool HasAvatar => avatarController != null && avatarController.HasAvatar;
     public string TrackingStatusText => _trackingStatusText;
     public bool IsRawCameraPreviewBlocked =>
         _cameraTexture == null || displayImage == null || displayImage.texture != _cameraTexture;
     public bool CanCalibrateAvatar => avatarController != null && avatarController.CanCalibrate;
     public bool IsCalibratingAvatar => avatarController != null && avatarController.IsCalibrating;
+    public bool IsCalibrationTrackingInterrupted =>
+        avatarController != null && avatarController.IsCalibrationTrackingInterrupted;
+    public bool IsPreparingCalibration { get; private set; }
+    public string CalibrationPreparationMessage { get; private set; } = string.Empty;
+    public int AvatarCalibrationCountdown => avatarController != null
+        ? avatarController.CalibrationCountdown
+        : 0;
+    public int CalibrationTrackingRecoveryCountdown => avatarController != null
+        ? avatarController.CalibrationTrackingRecoveryCountdown
+        : 0;
+    public int CalibrationNoticeRevision => avatarController != null
+        ? avatarController.CalibrationNoticeRevision
+        : 0;
+    public string CalibrationNoticeMessage => avatarController != null
+        ? avatarController.CalibrationNoticeMessage
+        : string.Empty;
+    public bool CalibrationNoticeIsError =>
+        avatarController != null && avatarController.CalibrationNoticeIsError;
     public string AvatarCalibrationButtonLabel => avatarController != null
         ? avatarController.CalibrationButtonLabel
         : "중립 자세 캘리브레이션 (3초)";
@@ -1057,6 +1178,75 @@ public class TrackingPipeline : MonoBehaviour
     public bool CalibrateAvatar()
     {
         return avatarController != null && avatarController.BeginCalibration();
+    }
+
+    public async Awaitable<string> RequestAvatarCalibrationAsync()
+    {
+        if (IsPreparingCalibration) return "캘리브레이션 준비가 이미 진행 중입니다.";
+        if (avatarController == null) return "아바타 컨트롤러가 준비되지 않았습니다.";
+
+        string reason = avatarController.GetCalibrationBlockReason(requireTracking: false);
+        if (!string.IsNullOrEmpty(reason)) return reason;
+
+        IsPreparingCalibration = true;
+        try
+        {
+            if (webcamManager == null) return "카메라 관리자가 준비되지 않았습니다.";
+            if (!webcamManager.IsReady)
+            {
+                CalibrationPreparationMessage = "카메라를 자동으로 시작하는 중...";
+                bool started = await ChangeCameraAsync(
+                    webcamManager.SelectedDeviceIndex,
+                    webcamManager.SelectedResolutionIndex,
+                    webcamManager.Mirror);
+                if (!started)
+                {
+                    return string.IsNullOrWhiteSpace(webcamManager.LastError)
+                        ? "카메라를 시작하지 못했습니다. 카메라 설정을 확인하세요."
+                        : webcamManager.LastError;
+                }
+            }
+
+            CalibrationPreparationMessage = "얼굴과 양쪽 어깨·팔꿈치를 찾는 중...";
+            float deadline = Time.unscaledTime + CalibrationTrackingWaitSeconds;
+            while (!_shuttingDown && !avatarController.HasCalibrationTracking && Time.unscaledTime < deadline)
+            {
+                reason = avatarController.GetCalibrationBlockReason(requireTracking: false);
+                if (!string.IsNullOrEmpty(reason)) return reason;
+                await Awaitable.NextFrameAsync();
+            }
+
+            if (_shuttingDown) return "프로그램 종료 중에는 캘리브레이션할 수 없습니다.";
+            reason = avatarController.GetCalibrationBlockReason(requireTracking: true);
+            if (!string.IsNullOrEmpty(reason)) return reason;
+            return avatarController.BeginCalibration() ? string.Empty : avatarController.Status;
+        }
+        finally
+        {
+            IsPreparingCalibration = false;
+            CalibrationPreparationMessage = string.Empty;
+        }
+    }
+
+    public System.Threading.Tasks.Task<bool> RegisterAndActivateAvatarAsync(string sourcePath)
+    {
+        return avatarController != null
+            ? avatarController.RegisterAndActivateAsync(sourcePath)
+            : System.Threading.Tasks.Task.FromResult(false);
+    }
+
+    public System.Threading.Tasks.Task<bool> ActivateAvatarAsync(string avatarId)
+    {
+        return avatarController != null
+            ? avatarController.ActivateAvatarAsync(avatarId)
+            : System.Threading.Tasks.Task.FromResult(false);
+    }
+
+    public System.Threading.Tasks.Task<bool> RemoveAvatarAsync(string avatarId)
+    {
+        return avatarController != null
+            ? avatarController.RemoveAvatarAsync(avatarId)
+            : System.Threading.Tasks.Task.FromResult(false);
     }
 
     public bool HasArmMappingConfig => avatarController != null && avatarController.HasArmMappingConfig;

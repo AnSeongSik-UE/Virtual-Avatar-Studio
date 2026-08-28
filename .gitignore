@@ -78,3 +78,8 @@ crashlytics-build.properties
 # have been verified. Their .meta files remain tracked to preserve references.
 /Assets/Models/*.onnx
 /Assets/StreamingAssets/Models/*.vrm
+/LocalOnly/
+
+# Local project state and work history
+/PROJECT_STATE.md
+/taskReport.md

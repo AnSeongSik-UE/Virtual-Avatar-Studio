@@ -348,7 +348,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 45099d624c1e6c14e9514f4e5ea1ed9c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _spoutName: VAS_Avatar
+  _spoutName: Virtual Avatar Studio
   _keepAlpha: 0
   _captureMethod: 1
   _sourceCamera: {fileID: 519420031}

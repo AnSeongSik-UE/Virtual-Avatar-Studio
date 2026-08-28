@@ -51,7 +51,7 @@ namespace UniVRM10
         public void Dispose()
         {
             UnityEngine.Object.Destroy(_controlRigAvatar);
-            UnityEngine.Object.Destroy(_controlRigRoot);
+            UnityEngine.Object.Destroy(_controlRigRoot.gameObject);
         }
 
         internal void Process()

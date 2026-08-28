@@ -25,6 +25,7 @@ namespace UniGLTF.SpringBoneJobs.InputPorts
         public NativeArray<BlittableJointImmutable> Logics { get; }
         private NativeArray<float3> _currentTailsBackup;
         private NativeArray<float3> _nextTailsBackup;
+        private bool _disposed;
         public Transform[] Transforms { get; }
 
         /// <summary>
@@ -175,12 +176,43 @@ namespace UniGLTF.SpringBoneJobs.InputPorts
 
         public void Dispose()
         {
-            if (Springs.IsCreated) Springs.Dispose();
-            if (Joints.IsCreated) Joints.Dispose();
-            if (Colliders.IsCreated) Colliders.Dispose();
-            if (Logics.IsCreated) Logics.Dispose();
-            if (_currentTailsBackup.IsCreated) _currentTailsBackup.Dispose();
-            if (_nextTailsBackup.IsCreated) _nextTailsBackup.Dispose();
+            if (_disposed) return;
+            _disposed = true;
+
+            DisposeArray(Springs);
+            DisposeArray(Joints);
+            DisposeArray(Colliders);
+            DisposeArray(Logics);
+            DisposeArray(ref _currentTailsBackup);
+            DisposeArray(ref _nextTailsBackup);
+        }
+
+        private static void DisposeArray<T>(NativeArray<T> array) where T : struct
+        {
+            try
+            {
+                if (array.IsCreated) array.Dispose();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception);
+            }
+        }
+
+        private static void DisposeArray<T>(ref NativeArray<T> array) where T : struct
+        {
+            try
+            {
+                if (array.IsCreated) array.Dispose();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception);
+            }
+            finally
+            {
+                array = default;
+            }
         }
     }
 }

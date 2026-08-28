@@ -4,8 +4,6 @@ using UnityEngine;
 using UniGLTF;
 
 #if UNITY_EDITOR
-using UnityEditor;
-
 namespace UniVRM10
 {
     public static class PreviewMaterialUtil
@@ -16,14 +14,14 @@ namespace UniVRM10
 
             var propNames = new List<string>();
             var hasError = false;
-            for (int i = 0; i < ShaderUtil.GetPropertyCount(material.shader); ++i)
+            for (int i = 0; i < material.shader.GetPropertyCount(); ++i)
             {
-                var propType = ShaderUtil.GetPropertyType(material.shader, i);
-                var name = ShaderUtil.GetPropertyName(material.shader, i);
+                var propType = material.shader.GetPropertyType(i);
+                var name = material.shader.GetPropertyName(i);
 
                 switch (propType)
                 {
-                    case ShaderUtil.ShaderPropertyType.Color:
+                    case UnityEngine.Rendering.ShaderPropertyType.Color:
                         // 色
                         {
                             if (!PreviewMaterialItem.TryGetBindType(name, out var bindType))
@@ -50,7 +48,7 @@ namespace UniVRM10
                         }
                         break;
 
-                    case ShaderUtil.ShaderPropertyType.TexEnv:
+                    case UnityEngine.Rendering.ShaderPropertyType.Texture:
                         break;
                 }
             }

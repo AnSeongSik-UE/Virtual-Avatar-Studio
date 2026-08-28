@@ -42,6 +42,7 @@ namespace UniVRM10.FastSpringBones
 
         public FastSpringBoneBufferCombiner BufferCombiner { get; private set; }
         private FastSpringBoneScheduler _fastSpringBoneScheduler;
+        private bool _resourcesDisposed;
 
         private static FastSpringBoneService _instance;
 
@@ -71,25 +72,48 @@ namespace UniVRM10.FastSpringBones
         /// </summary>
         public static void Free()
         {
+            if (!_instance) return;
+            _instance.DisposeOwnedResources();
             Destroy(_instance.gameObject);
             _instance = null;
         }
 
+        public static void DisposeResourcesForEditorReload()
+        {
+            if (_instance) _instance.DisposeOwnedResources();
+        }
+
         private void OnEnable()
         {
+            _resourcesDisposed = false;
             BufferCombiner = new FastSpringBoneBufferCombiner();
             _fastSpringBoneScheduler = new FastSpringBoneScheduler(BufferCombiner);
         }
 
         private void OnDisable()
         {
-            BufferCombiner.Dispose();
-            _fastSpringBoneScheduler.Dispose();
+            DisposeOwnedResources();
+        }
+
+        private void OnDestroy()
+        {
+            DisposeOwnedResources();
+            if (_instance == this) _instance = null;
+        }
+
+        private void DisposeOwnedResources()
+        {
+            if (_resourcesDisposed) return;
+            _resourcesDisposed = true;
+
+            _fastSpringBoneScheduler?.Dispose();
+            _fastSpringBoneScheduler = null;
+            BufferCombiner = null;
         }
 
         private void LateUpdate()
         {
-            if (UpdateType == UpdateTypes.LateUpdate)
+            if (!_resourcesDisposed && _fastSpringBoneScheduler != null && UpdateType == UpdateTypes.LateUpdate)
             {
                 _fastSpringBoneScheduler.Schedule(Time.deltaTime).Complete();
             }
@@ -102,6 +126,7 @@ namespace UniVRM10.FastSpringBones
         
         public JobHandle ManualUpdate(in float deltaTime, in JobHandle? dependency = null)
         {
+            if (_resourcesDisposed || _fastSpringBoneScheduler == null) return dependency ?? default;
             if (UpdateType != UpdateTypes.Manual)
             {
                 throw new global::System.ArgumentException("require UpdateTypes.Manual");

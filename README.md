@@ -1,97 +1,174 @@
-# Unity_Virtual Avatar Studio
+# Virtual Avatar Studio
 
-Unity 6와 Unity Inference Engine을 사용해 PC 웹캠 영상에서 얼굴과 상체 포즈를 추론하는 신입 포트폴리오 프로젝트입니다.
+Unity® 6와 Sentis를 사용해 웹캠에서 얼굴과 상체 포즈를 추론하고, VRM 아바타만 OBS로 전달하는 Windows용 버추얼 아바타 스튜디오입니다.
 
-## 현재 기준점
+웹캠 원본을 방송 화면에 표시하지 않으면서 VRM 등록·캘리브레이션·크로마키 배경·Spout 송출까지 하나의 앱에서 운영하는 것을 목표로 제작했습니다.
 
-- Unity 6000.3.10f1
-- Universal Render Pipeline 17.3.0
-- Unity Inference Engine 2.5.0
-- BlazeFace 및 BlazePose ONNX 추론
-- GPUCompute 백엔드
-- PC 웹캠 입력과 추적 결과 디버그 표시
-- 원본 웹캠 영상 출력 차단과 익명 상체 뼈대 미리보기
-- KlakSpout 카메라 캡처 기반 OBS 아바타 전용 출력
-- 웹캠 장치·해상도 선택 및 미러 설정 저장
-- 추론 중 안전한 웹캠 전환
-- MINI.vrm 런타임 로드 및 머리·양팔 직접 구동
-- Windows 실행 파일과 에디터의 StreamingAssets VRM 경로 통일
-- 중립 자세 캘리브레이션과 추적 손실 시 기본 자세 복귀
+[Windows x64 릴리즈 다운로드](../../releases/latest)
 
-실행 중 `F1` 키로 웹캠 설정 패널을 표시하거나 숨길 수 있습니다. 선택한 장치, 해상도와 미러 설정은 `PlayerPrefs`에 저장됩니다.
+![Virtual Avatar Studio 데모](Docs/Media/virtual-avatar-studio-demo.gif)
 
-아바타가 로드되고 포즈가 검출되면 `Calibrate Neutral Pose (3 sec)` 또는 `C` 키로 카운트다운을 시작합니다. 얼굴·양쪽 어깨·양쪽 팔꿈치만 화면 안에 둔 채 팔을 편안하게 내리면 마지막 자세가 중립 기준으로 저장됩니다. 손목과 손은 화면에 들어오지 않아도 됩니다.
+## 주요 기능
 
-### Arm Mapping Config
+- BlazeFace·BlazePose 기반 얼굴 및 상체 포즈 추론
+- VRM 0.x와 VRM 1.0 런타임 등록·전환·제거
+- 숨겨진 후보 로드와 필수 휴머노이드 본 검증을 이용한 안전 교체
+- 아바타별 중립 자세 캘리브레이션과 팔 매핑 설정
+- 기본색·크로마 녹색·크로마 파란색 및 사용자 지정 RGB 배경
+- KlakSpout을 이용한 OBS 아바타·배경 전용 송출
+- 웹캠 원본과 트래킹 UI가 OBS 출력에 포함되지 않는 분리 구조
+- 렌더·추론·검출·실제 포즈 적용 주기의 실시간 성능 계측
+- 다중 VRM 등록, SHA-256 중복 방지와 마지막 활성 아바타 복원
 
-설정 패널 아래의 `Arm Mapping Config`에서 아바타마다 다른 팔 본 축과 웹캠 좌우 방향을 실행 중 조정할 수 있습니다.
+## 시스템 구조
 
-1. `Enable bone-only test mode`를 켜고 `Neutral`, `T Pose`, `Both Up`을 눌러 웹캠과 무관하게 VRM 팔 방향을 확인합니다.
-2. 필요하면 `Left/Right bone Z`를 움직여 정상적인 중립 자세와 올린 자세가 되는 부호를 찾습니다.
+웹캠 프레임은 Sentis 추론 입력으로만 사용합니다. 추론이 끝나면 영상이 아닌 머리·팔 회전값, 표정 수치와 추적 상태를 `TrackingPacket`으로 전달합니다. Main Camera가 렌더링한 아바타와 단색 배경만 KlakSpout을 통해 OBS로 공유합니다.
+
+![Virtual Avatar Studio 시스템 구조](Docs/Media/virtual-avatar-studio-architecture.png)
+
+## 실행 방법
+
+### 준비 환경
+
+- Windows 10/11 64비트
+- 일반 USB 웹캠 또는 Windows 카메라 장치로 인식되는 웹캠
+- Direct3D 11을 지원하는 GPU
+- 사용할 권한이 있는 VRM 0.x 또는 VRM 1.0 파일
+- OBS 송출 시 OBS Studio와 Windows용 Spout2 플러그인
+
+### Windows 릴리즈
+
+1. [GitHub Releases](../../releases/latest)에서 `Virtual Avatar Studio_1.0.zip`을 받습니다.
+2. ZIP을 원하는 폴더에 완전히 압축 해제합니다.
+3. `Virtual_Avatar_Studio.exe`를 실행합니다.
+4. 아바타 페이지에서 `.vrm` 파일을 등록합니다. Virtual_Avatar_Studio.exe 창으로 파일을 끌어 놓아도 됩니다.
+5. 카메라 페이지에서 웹캠을 선택하고 시작합니다.
+6. 얼굴·양쪽 어깨·팔꿈치가 인식되면 `중립 자세 캘리브레이션 (3초)` 또는 `C` 키를 누릅니다.
+7. 아바타 페이지에서 송출 배경색을 선택합니다.
+
+실행 파일은 코드 서명이 적용되지 않아 Windows SmartScreen 경고가 나타날 수 있습니다. 압축 파일에는 기본 VRM이 포함되지 않습니다.
+
+일반 UVC USB 웹캠은 Windows 카메라 장치로 인식되면 사용할 수 있습니다. 다른 프로그램이 같은 웹캠을 독점하고 있거나 Windows 개인정보 설정에서 데스크톱 앱의 카메라 접근이 꺼져 있으면 시작하지 못할 수 있습니다.
+
+## VRM 등록과 캘리브레이션
+
+아바타 등록 이력이 없는 최초 실행은 아바타 없이 시작합니다. 파일 탐색기나 Virtual_Avatar_Studio.exe 외부 드래그앤드롭으로 여러 VRM을 등록할 수 있지만, 렌더링과 메모리 사용량을 제한하기 위해 활성 아바타는 한 개만 유지합니다.
+
+등록에 성공한 VRM은 앱 전용 로컬 캐시에 복사하고 SHA-256으로 중복 등록을 방지합니다. 새 아바타는 화면에 보이지 않는 후보 상태에서 파싱과 필수 본 검증을 통과한 뒤에만 기존 아바타와 교체됩니다. 등록 제거는 앱 전용 캐시와 등록 정보만 삭제하며 사용자가 선택한 원본 파일은 삭제하지 않습니다.
+
+캘리브레이션할 때는 상체를 카메라 정면에 두고 양팔을 편안하게 내립니다. 손목과 손은 화면에 들어오지 않아도 됩니다. 인식 범위를 벗어나면 최대 5초간 복귀를 기다린 뒤 3초 카운트다운을 다시 시작합니다.
+
+![VRM 등록과 캘리브레이션](Docs/Media/avatar-setup.png)
+
+*VRM 등록 후 중립 자세 캘리브레이션을 진행하는 Windows 앱 화면*
+
+### 예시 VRM 1.0
+
+저장소와 릴리즈에는 기본 VRM을 포함하지 않습니다. 테스트 파일이 필요한 경우 VRM Consortium 공식 샘플인 Seed-san을 사용할 수 있습니다.
+
+- [Seed-san 모델과 라이선스 안내](https://github.com/vrm-c/vrm-specification/tree/master/samples/Seed-san)
+- [Seed-san.vrm 원본 다운로드](https://raw.githubusercontent.com/vrm-c/vrm-specification/master/samples/Seed-san/vrm/Seed-san.vrm)
+- [VRM Public License 1.0](https://vrm.dev/licenses/1.0/)
+
+모델을 사용하기 전에 원본 VRM에 포함된 이용 조건을 직접 확인해야 합니다.
+
+## OBS 송출
+
+1. [Spout2 Plugin for OBS](https://github.com/Off-World-Live/obs-spout2-plugin/releases)를 설치합니다.
+2. OBS에서 `Spout 2 Capture` 소스를 추가합니다.
+3. 송신자로 `Virtual Avatar Studio`를 선택합니다.
+4. 녹색 또는 파란색 배경을 선택했다면 OBS 필터에서 크로마키를 적용합니다.
+5. 소스 크기가 캔버스와 다르면 `변환 > 화면에 맞춤`을 실행합니다.
+
+노트북처럼 내장 GPU와 외장 GPU가 함께 있는 환경에서는 Virtual Avatar Studio와 OBS를 Windows 그래픽 설정에서 같은 GPU로 지정해야 합니다. OBS에서는 Spout 출력을 사용하므로 동일 USB 웹캠을 별도의 `비디오 캡처 장치`로 열 필요가 없습니다.
+
+Spout에는 Main Camera가 렌더링한 아바타와 배경만 전달됩니다. 카메라·아바타·팔·테스트 페이지, 캘리브레이션 안내, 성능 패널과 익명 추적 뼈대는 트래킹 UI에만 표시됩니다.
+
+![OBS Spout 송출](Docs/Media/obs-spout-output.png)
+
+*Virtual Avatar Studio의 아바타·배경을 OBS Spout 소스로 수신한 화면*
+
+## 기술적 해결 내용
+
+### 추론 파이프라인 최적화
+
+Windows Player에서 렌더는 평균 60 FPS였지만 추론 갱신이 평균 9 FPS로 떨어져 아바타가 끊겨 보였습니다. 포즈 검출기의 GPU 출력 세 개를 순차적으로 요청하던 방식을 모든 readback 요청을 먼저 시작한 뒤 각각 기다리는 구조로 변경했습니다. 추론 중 이미 렌더 프레임이 지난 경우 루프 말미의 불필요한 추가 프레임 대기도 제거했습니다.
+
+검증 환경은 RTX 4080 Laptop GPU, Direct3D 11, USB 웹캠, 손 추적 비활성화 상태입니다.
+
+| 항목 | 개선 전 | 개선 후 |
+| --- | ---: | ---: |
+| 렌더 평균 | 60 FPS | 60 FPS |
+| 추론 처리 평균 | 98.3 ms | 62.9 ms |
+| 추론 갱신 평균 | 9 FPS | 16 FPS |
+
+개선 후 움직임이 부드러워졌음을 확인했습니다. 포즈 랜드마크와 실제 포즈 적용은 측정 당시 평균 6 FPS였으므로 추가 최적화 여지는 남아 있습니다.
+
+### VRM 안전 교체와 자원 수명주기
+
+- 새 VRM을 숨겨진 후보로 로드하고 검증 성공 시에만 활성 아바타 교체
+- 파싱 실패·필수 본 누락 같은 확정 오류와 파일 잠김·접근 거부 같은 일시 오류 분리
+- 후보 실패·교체·제거·종료 시 UniVRM 런타임을 먼저 동기 해제한 뒤 GameObject 파괴
+- Editor 재컴파일과 Play Mode 종료를 포함한 SpringBone 네이티브 버퍼 정리 경로 통합
+- 사용하지 않던 2D Animation 패키지를 제거해 Player 종료 시 fallback `ComputeBuffer` 경고 해소
+
+### 성능 패널과 로그
+
+성능 패널은 기본 한 줄 요약으로 접혀 있으며, 제목을 드래그해 이동할 수 있습니다. 펼치면 렌더, 전체 추론 처리·갱신, 얼굴 검출, 포즈 검출, 포즈 랜드마크와 실제 포즈 적용의 순간·EMA 평균을 확인할 수 있습니다.
+
+카메라 변경·중지 또는 앱 정상 종료 시 같은 수치를 측정 구간당 한 번 `[TrackingPerformance]` 블록으로 기록합니다.
+
+```text
+%USERPROFILE%\AppData\LocalLow\Portfolio\Virtual Avatar Studio\Player.log
+```
+
+![추적 및 성능 패널](Docs/Media/tracking-performance.png)
+
+*드래그 이동을 지원하는 추적·성능 상세 패널*
+
+## 개인정보 보호 설계
+
+- 원본 `WebCamTexture`는 얼굴·포즈 추론 입력으로만 사용
+- 트래킹 화면에는 원본 영상 대신 얼굴 랜드마크와 상체 뼈대만 표시
+- 원본 카메라 프레임을 PNG·JPG 또는 영상 파일로 저장하는 경로 없음
+- 선택적 UDP 출력은 영상이 아닌 회전·표정 수치만 전송하며 기본 비활성화
+- Spout 초기화 실패 시 웹캠이 포함될 수 있는 Game View 캡처로 자동 전환하지 않음
+
+## 팔 매핑과 진단
+
+<details>
+<summary>아바타별 팔 매핑 설정</summary>
+
+1. `뼈 단독 테스트 모드 사용`을 켜고 중립·T 포즈·양팔 올림으로 VRM 팔 본 방향을 확인합니다.
+2. 필요하면 왼팔·오른팔 중립 Z축을 조정합니다.
 3. 테스트 모드를 끄고 웹캠을 시작한 뒤 중립 자세를 다시 캘리브레이션합니다.
-4. 반대쪽 팔이 움직이면 `Swap left / right input`, 움직임 방향이 반대면 해당 `Invert`를 켭니다.
-5. `Left/Right gain`은 움직임 크기, `Max delta`는 최대 가동 범위를 조절합니다.
-6. `Input smoothing`은 클수록 입력 반응이 빨라지고 작을수록 부드러워집니다. 기본값은 0.4입니다.
-7. `Max input jump`는 한 추론 프레임에서 허용할 방향 변화입니다. 관절이 순간적으로 튀면 낮추고 빠른 동작이 무시되면 높입니다. 기본값은 120도입니다.
+4. 반대쪽 팔이 움직이면 좌우 입력 교환을 사용합니다.
+5. 움직임 방향이 반대면 해당 팔 방향 반전을 사용합니다.
+6. 이득, 최대 변화량, 입력 평활화와 최대 입력 점프를 아바타에 맞게 조정합니다.
 
-설정 변경은 0.5초 뒤 PlayerPrefs에 자동 저장됩니다. 테스트 모드는 다음 실행에서 안전하게 꺼진 상태로 시작합니다. 기본값으로 돌아가려면 `Reset Arm Config`를 누릅니다.
+팔 설정과 최근 검증 결과는 등록 아바타별로 분리해 저장됩니다.
 
-팔 방향은 각도 숫자가 아닌 어깨에서 팔꿈치로 향하는 2D 단위 벡터 상태로 보간합니다. 따라서 같은 방향인 -180도와 +180도 사이에서 입력 표시가 바뀌더라도 아바타 팔은 반대편으로 회전하지 않습니다. 포즈를 잃었다가 다시 찾으면 필터를 현재 방향으로 초기화하며, 길이가 너무 짧거나 갑자기 튄 관절값은 직전 정상 방향을 유지합니다.
+</details>
 
-### Debug / Arm Validation
+<details>
+<summary>팔 동작 검증</summary>
 
-`Arm Validation`은 Calibration을 대신하지 않는 문제 진단용 기능입니다. 먼저 Calibration을 완료하고 Bone Test를 끈 다음, 접힌 `Debug / Test` 영역에서 필요할 때만 실행합니다.
+캘리브레이션을 완료하고 뼈 단독 테스트를 끈 뒤 테스트 페이지에서 팔 동작 검증을 실행합니다. 검사는 중립 자세, 왼팔 들기, 다시 중립 자세, 오른팔 들기 순서로 진행합니다. 좌우 반응, 각도 경계 안정성, 출력 급변, 거부된 이상 입력과 포즈 유실 시간을 기준으로 결과를 표시합니다.
 
-검사는 좁은 공간에서도 손목을 화면에 넣지 않고 실행할 수 있도록 12초 동안 다음 순서로 진행됩니다.
+</details>
 
-1. 3초 동안 편안한 중립 자세
-2. 왼쪽 팔꿈치 들기
-3. 다시 중립 자세
-4. 오른쪽 팔꿈치 들기
+## 개발 환경과 소스 실행
 
-검사가 끝나면 좌우 반응 각도, -180/+180도 경계 통과 안정성, 출력 급변, 거부된 이상 입력 수와 포즈 유실 시간을 기준으로 `PASS` 또는 `CHECK`를 표시합니다. 최근 결과는 PlayerPrefs에 저장됩니다.
+| 구성 | 버전 |
+| --- | --- |
+| Unity | 6000.3.10f1 |
+| Universal Render Pipeline | 17.3.0 |
+| Sentis / Unity Inference Engine | 2.5.0 |
+| UniVRM | 0.131.0 |
+| KlakSpout | 2.0.6 |
+| UniTask | 2.5.10 |
 
-사용자 화면의 웹캠 설정, 아바타 상태, 캘리브레이션, 팔 매핑, 추적 상태와 검증 결과는 모두 한글로 표시됩니다. 프로젝트에 포함한 `NotoSansKR-Regular.otf` 영구 Font 에셋을 `Resources`에서 한 번 불러와 16px 전용 IMGUI 스킨에 적용하며, 각 OnGUI 종료 시 Unity 원본 스킨을 복원합니다. 실행 중 생성·제거되는 OS 동적 폰트를 사용하지 않으므로 운영체제 폰트 설치 여부에 의존하지 않고 스크립트 재로드 후 잘못된 폰트 참조도 남기지 않습니다. 한글 글리프 누락 가능성이 있는 기존 TextMeshPro 추적 상태는 비활성화하고 동일 내용을 좌측 하단 IMGUI 상태창에 표시합니다. 장치명·파일명·오류 원문과 FPS 등의 기술 단위는 진단을 위해 유지합니다.
-
-팔 동작 검증을 시작하면 설정 패널을 F1로 숨겨도 메인 화면 상단 중앙에 단계별 한글 안내와 진행 막대가 크게 표시됩니다. 글자 크기는 화면 높이에 따라 28~52px 범위로 조절되며, 완료 결과는 5초 동안 `팔 동작 검증 통과` 또는 `팔 동작 검증: 확인 필요`로 표시됩니다.
-
-검증 진행 안내와 완료 결과는 일반 설정 및 추적 상태보다 마지막에 렌더링하고 전용 최상단 GUI 깊이를 사용하므로 다른 런타임 IMGUI 요소에 가려지지 않습니다.
-
-### 개인정보 보호 출력
-
-원본 `WebCamTexture`는 얼굴·포즈 AI 추론 입력으로만 사용하고 `RawImage`나 다른 화면 요소에는 연결하지 않습니다. 우측 상단 미리보기 영역에는 불투명한 어두운 배경 위에 얼굴 랜드마크와 양쪽 어깨·팔꿈치 상체 뼈대만 표시합니다. 웹캠 텍스처가 실수로 화면 요소에 직접 연결되면 매 프레임 보호 검사가 이를 감지하여 즉시 불투명 화면으로 교체합니다.
-
-원본 카메라 프레임을 PNG/JPG로 변환하거나 파일에 저장하는 경로는 없으며, 선택적인 UDP 출력도 영상이 아닌 머리·팔 회전과 표정 수치만 전송하고 기본 비활성화 상태입니다. F1 설정창 표시 여부와 관계없이 원본 영상은 출력하지 않습니다. 카메라를 중지하면 익명 뼈대와 추적점도 즉시 지웁니다.
-
-### OBS 아바타 전용 출력
-
-Main Camera에는 KlakSpout 2.0.6의 `SpoutSender`를 연결하고 송신자 이름을 `VAS_Avatar`로 고정합니다. 캡처 방식은 `Camera`, 알파 유지는 끈 상태입니다. 기존 Main Camera가 이미 렌더링한 결과를 공유하므로 두 번째 카메라나 장면 중복 렌더링을 만들지 않습니다.
-
-프로젝트의 Graphics Settings에는 `UniversalRP`를 연결하고, 기존 Renderer2D는 기본 인덱스 0으로 보존한 채 Main Camera만 인덱스 1의 `VASUniversalRenderer`를 사용합니다. Built-in 파이프라인과 URP Renderer2D는 이 구성에서 KlakSpout의 카메라 캡처 동작을 실행하지 않아 송신자 이름과 해상도만 보이는 검은 프레임이 발생할 수 있으므로, 방송 카메라는 CapturePass를 실행하는 Universal Renderer로 고정합니다.
-
-Spout에는 Main Camera가 렌더링한 아바타와 배경만 전달됩니다. 웹캠 설정·상태·캘리브레이션·팔 검증은 `OnGUI`, 익명 추적 뼈대는 `Screen Space - Overlay` Canvas이므로 카메라 출력에 포함되지 않습니다. 원본 웹캠 텍스처는 계속 AI 추론 입력에만 사용됩니다. 송출 초기화에 실패하더라도 개인정보 보호를 우회하는 `Game View` 캡처로 자동 전환하지 않습니다.
-
-OBS Studio에는 Windows 64비트용 `Spout2 Plugin for OBS`를 별도로 설치해야 합니다. 설치 후 OBS 소스에서 `Spout 2 Capture`를 추가하고 송신자 `VAS_Avatar`를 선택합니다. 노트북처럼 내장 GPU와 외장 GPU가 함께 있는 환경에서는 Unity Player와 OBS를 Windows 그래픽 설정에서 같은 GPU로 지정합니다. KlakSpout은 Windows Direct3D 11/12만 지원합니다.
-
-Editor Game View에서는 현재 Game View 크기가 송출 해상도가 됩니다. Windows Player는 프로젝트 기본값인 1920x1080 고정 창을 사용합니다. 실기에서는 OBS 화면을 기준으로 다음을 확인합니다.
-
-1. 설정창과 추적 뼈대를 모두 표시한 상태에서도 OBS에는 아바타와 배경만 나오는지 확인합니다.
-2. 카메라 시작·중지, 미러 전환, 캘리브레이션과 팔 검증 중에도 웹캠 원본과 안내 UI가 한 프레임도 나타나지 않는지 확인합니다.
-3. Unity보다 OBS를 먼저 또는 나중에 실행해도 `VAS_Avatar`가 다시 연결되는지 확인합니다.
-4. 송출 전후 60초 평균 렌더·추론 통계와 OBS의 렌더링 지연 및 누락 프레임을 비교합니다.
-5. 방송 중에는 Player를 최소화하지 않고 뒤로 보내며, 포커스 이동 후에도 추론과 아바타 갱신이 계속되는지 확인합니다.
-
-### 경량 성능 통계
-
-좌측 하단 상태창은 Game 렌더, AI 추론 처리시간과 실제 추론 완료 주기를 분리합니다. 렌더는 순간·EMA 평균 FPS와 ms, 추론 처리는 순간·평균 ms, 추론 갱신은 연속 완료 시각 간격에서 계산한 실제 순간·평균 FPS와 ms를 표시합니다. 카메라 변경 후 렌더 30프레임과 추론 5회를 워밍업으로 제외하며, 평균 계산에는 배열·큐·LINQ 없이 통계별 고정 float와 단순 곱셈·덧셈만 사용합니다. 상태 문자열은 초당 4회만 갱신합니다.
-
-강제 VSync 변경과 Application.targetFrameRate 제한은 적용하지 않으며 Unity 프로젝트 및 실행 환경의 기본 렌더 설정을 사용합니다. 상태창 높이는 GUIStyle.CalcHeight로 실제 한글 줄바꿈 높이를 계산해 첫 줄이나 마지막 줄이 잘리지 않도록 구성합니다. 컴포넌트 비활성화 시 임시 GUI 스킨만 제거하고 프로젝트의 영구 Font 에셋은 Unity 리소스 수명주기에 맡겨 `UnityEditor.ScriptReloadProperties`가 삭제된 폰트를 복원하지 않도록 합니다.
-
-단일 순간값만으로 성능 상태를 판정하지 않으며, 일정 시간 유지된 평균 렌더 및 추론 수치를 기준으로 후속 최적화 여부를 결정합니다.
-
-### 로컬 모델 준비와 재배포 범위
-
-공개 저장소에는 제3자 모델 바이너리를 포함하지 않습니다. ONNX 파일은 Unity Technologies의 Sentis Blaze Detection Sample에서 다음 5개를 받아 `Assets/Models`에 배치합니다.
+공개 저장소에는 제3자 ONNX 바이너리를 포함하지 않습니다. [Unity Technologies Sentis Blaze Detection Sample](https://github.com/Unity-Technologies/sentis-samples/tree/main/BlazeDetectionSample)에서 다음 파일을 받아 `Assets/Models`에 배치해야 합니다.
 
 - `blaze_face_short_range.onnx`
 - `hand_detector.onnx`
@@ -99,47 +176,48 @@ Editor Game View에서는 현재 Game View 크기가 송출 해상도가 됩니�
 - `pose_detection.onnx`
 - `pose_landmarks_detector_full.onnx`
 
-아바타는 본인이 사용·배포할 권리를 가진 VRM 파일을 `Assets/StreamingAssets/Models/MINI.vrm`에 배치합니다. 현재 로컬 테스트에 사용한 VRM은 내부 메타데이터가 재배포 금지이므로 Git 추적 대상에서 제외했습니다. ONNX와 VRM의 `.meta` 파일은 씬과 에셋 참조를 유지하기 위해 저장소에 포함합니다.
+Unity에서 프로젝트를 연 뒤 `Assets/Scenes/SampleScene.unity`를 실행합니다. Windows 빌드는 Unity 메뉴의 `VAS > 빌드 > Windows x64 방송 빌드`를 사용합니다. 빌드 전후 검사에서 `.vrm`이 발견되면 결과물을 제거하고 실패 처리합니다.
 
-### Windows 방송 실행 기준
+Unity batchmode는 이 프로젝트의 현재 권장 빌드 경로가 아닙니다.
 
-`MINI.vrm`은 `Assets/StreamingAssets/Models`에 저장하고 에디터와 Windows 실행 파일 모두 `Application.streamingAssetsPath`를 기준으로 불러옵니다. 빌드 후에는 실행 파일의 `_Data/StreamingAssets/Models/MINI.vrm`으로 함께 배포되므로 에디터에서만 아바타가 표시되는 경로 차이를 방지합니다.
+## 폴더 구성
 
-Player Settings의 백그라운드 실행을 활성화하여 OBS나 다른 운영 도구로 포커스를 옮겨도 웹캠 추론과 아바타 갱신이 계속되도록 구성합니다. Windows 실기에서는 아바타 로드, 카메라 수동 시작, 익명 뼈대 표시, 캘리브레이션과 OBS 전환 후 동작 지속을 확인합니다.
+- `Assets/VAS/Tracking`: 웹캠 수명주기, Sentis 추론과 성능 계측
+- `Assets/VAS/Avatar`: VRM 등록 저장소와 안전 교체 제어
+- `Assets/VAS/Platform`: Windows 파일 선택과 외부 드롭 연동
+- `Assets/VAS/Mapping`: 추적 결과와 아바타 매핑
+- `Assets/VAS/Network`: 선택적 수치 데이터 UDP 출력
+- `Assets/VAS/Resources/Fonts`: 한글 런타임 UI 폰트와 라이선스
+- `Assets/PC`: VRM 본·표정 매핑
+- `Assets/Models`: 로컬 ONNX 모델
+- `Assets/Shared`: 공용 추적 데이터와 필터
+- `Docs/Media`: README 데모와 시스템 구조도
+- `LocalOnly/Avatars`: Git과 빌드에서 제외되는 로컬 VRM 보관 위치
 
-## 1차 구현 범위
+## 검증 범위
 
-1. 웹캠 장치 및 해상도 선택
-2. 얼굴·포즈 추론 주기 제어
-3. VRM 머리·상체·팔 구동
-4. 캘리브레이션과 EMA/Quaternion 보간
-5. 설정 저장과 성능 모니터링
-6. Windows 실행 빌드
+- Editor Play Mode와 Windows Player의 VRM 0.x·1.0 등록 및 전환
+- 한글과 공백이 포함된 경로의 파일 탐색기 등록
+- Windows Player 외부 드래그앤드롭 등록
+- 중복 등록 방지, 현재·비활성 아바타 제거와 재실행 복원
+- 캘리브레이션 인식 이탈·복귀 및 팔 매핑·검증
+- 선택한 배경색 유지와 OBS 크로마키
+- OBS에서 트래킹 UI·웹캠 원본 비노출
+- 반복 교체와 정상 종료 시 네이티브 자원 경고·예외 부재
+- Windows x64 빌드 결과의 `.vrm` 파일 0개
 
-손 추적과 네트워크 출력은 기본적으로 비활성화하며 핵심 기능 완성 후 선택적으로 다룹니다.
+## 라이선스와 출처
 
-## 폴더
+프로젝트는 Unity Technologies의 Sentis 샘플을 기준으로 Blaze 얼굴·손·포즈 추론 구조를 구현했습니다. 모델과 라이브러리를 포함한 제3자 구성요소의 출처와 조건은 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 확인하십시오.
 
-- `Assets/VAS/Tracking`: Sentis 추론과 웹캠 파이프라인
-- `Assets/VAS/Mapping`: 추적 결과 변환
-- `Assets/VAS/Network`: 선택적 UDP 통신 코드
-- `Assets/VAS/Resources/Fonts`: 한글 런타임 UI 폰트와 배포 라이선스
-- `Assets/StreamingAssets/Models`: Windows 실행 파일에 원본 그대로 포함되는 VRM 모델
-- `Assets/PC`: PC 수신 및 VRM 매핑 코드
-- `Assets/Models`: ONNX 및 VRM 모델
-- `Assets/Shared`: 공용 데이터와 필터
+- [Sentis Samples](https://github.com/Unity-Technologies/sentis-samples)
+- [UniVRM](https://github.com/vrm-c/UniVRM)
+- [KlakSpout](https://github.com/keijiro/KlakSpout)
+- [OBS Spout2 Plugin](https://github.com/Off-World-Live/obs-spout2-plugin)
+- [Noto CJK](https://github.com/notofonts/noto-cjk)
 
-## 출처
+## 상표 고지
 
-Blaze 추론 구조는 Unity Technologies의 공식 Sentis 샘플을 기준으로 검토합니다.
+Virtual Avatar Studio was made with Unity®. Unity is a trademark or registered trademark of Unity Technologies.
 
-- https://github.com/Unity-Technologies/sentis-samples
-
-아바타 전용 OBS 출력에는 KlakSpout 2.0.6과 OBS Spout2 플러그인을 사용합니다.
-
-- https://github.com/keijiro/KlakSpout
-- https://github.com/Off-World-Live/obs-spout2-plugin
-
-한글 런타임 UI에는 Noto 프로젝트의 `Noto Sans KR Regular`를 사용하며 SIL Open Font License 1.1 원문을 폰트와 함께 포함합니다.
-
-- https://github.com/notofonts/noto-cjk
+Copyright © 2005–2026 Unity Technologies. All rights reserved.

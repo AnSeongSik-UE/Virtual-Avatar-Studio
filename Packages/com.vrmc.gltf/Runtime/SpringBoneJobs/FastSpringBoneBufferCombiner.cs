@@ -123,6 +123,28 @@ namespace UniGLTF.SpringBoneJobs
                 _combinedBuffer.Dispose();
                 _combinedBuffer = null;
             }
+
+            var buffersToDispose = new HashSet<FastSpringBoneBuffer>(_buffers);
+            _buffers.Clear();
+
+            while (_request.Count > 0)
+            {
+                var request = _request.Dequeue();
+                if (request.Add != null) buffersToDispose.Add(request.Add);
+                if (request.Remove != null) buffersToDispose.Add(request.Remove);
+            }
+
+            foreach (var buffer in buffersToDispose)
+            {
+                try
+                {
+                    buffer.Dispose();
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogException(exception);
+                }
+            }
         }
 
         public void DrawGizmos()

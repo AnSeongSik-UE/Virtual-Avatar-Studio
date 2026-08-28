@@ -75,18 +75,18 @@ namespace UniVRM10
             Assert.AreEqual(lhs.name, rhs.name);
             Assert.AreEqual(lhs.shader, rhs.shader);
             var sb = new StringBuilder();
-            for (int i = 0; i < ShaderUtil.GetPropertyCount(lhs.shader); ++i)
+            for (int i = 0; i < lhs.shader.GetPropertyCount(); ++i)
             {
-                var prop = ShaderUtil.GetPropertyName(lhs.shader, i);
+                var prop = lhs.shader.GetPropertyName(i);
                 if (s_ignoreProps.Contains(prop))
                 {
                     continue;
                 }
 
-                switch (ShaderUtil.GetPropertyType(lhs.shader, i))
+                switch (lhs.shader.GetPropertyType(i))
                 {
-                    case UnityEditor.ShaderUtil.ShaderPropertyType.Color:
-                    case UnityEditor.ShaderUtil.ShaderPropertyType.Vector:
+                    case UnityEngine.Rendering.ShaderPropertyType.Color:
+                    case UnityEngine.Rendering.ShaderPropertyType.Vector:
                         {
                             var l = lhs.GetVector(prop);
                             var r = rhs.GetVector(prop);
@@ -97,8 +97,8 @@ namespace UniVRM10
                         }
                         break;
 
-                    case UnityEditor.ShaderUtil.ShaderPropertyType.Float:
-                    case UnityEditor.ShaderUtil.ShaderPropertyType.Range:
+                    case UnityEngine.Rendering.ShaderPropertyType.Float:
+                    case UnityEngine.Rendering.ShaderPropertyType.Range:
                         {
                             var l = lhs.GetFloat(prop);
                             var r = rhs.GetFloat(prop);
@@ -109,7 +109,7 @@ namespace UniVRM10
                         }
                         break;
 
-                    case UnityEditor.ShaderUtil.ShaderPropertyType.TexEnv:
+                    case UnityEngine.Rendering.ShaderPropertyType.Texture:
                         {
                             var l = lhs.GetTextureOffset(prop);
                             var r = rhs.GetTextureOffset(prop);
