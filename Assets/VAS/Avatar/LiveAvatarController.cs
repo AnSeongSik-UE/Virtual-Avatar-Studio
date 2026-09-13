@@ -8,15 +8,23 @@ using UniJSON;
 using UniVRM10;
 using UnityEngine;
 
+public enum BroadcastBackgroundMode
+{
+    BackgroundRemoval = 0,
+    SolidColor = 1
+}
+
 public static class BroadcastBackgroundSettings
 {
     private const string RedKey = "VAS.Broadcast.Background.R";
     private const string GreenKey = "VAS.Broadcast.Background.G";
     private const string BlueKey = "VAS.Broadcast.Background.B";
+    private const string ModeKey = "VAS.Broadcast.Background.Mode";
 
     private static readonly Color DefaultBackgroundColor = new(0.055f, 0.075f, 0.12f, 1f);
     private static bool _loaded;
     private static Color _currentColor;
+    private static BroadcastBackgroundMode _currentMode;
 
     public static Color DefaultColor => DefaultBackgroundColor;
 
@@ -29,17 +37,38 @@ public static class BroadcastBackgroundSettings
         }
     }
 
+    public static BroadcastBackgroundMode CurrentMode
+    {
+        get
+        {
+            EnsureLoaded();
+            return _currentMode;
+        }
+    }
+
     public static void SetCurrentColor(Color color)
     {
         _loaded = true;
         _currentColor = OpaqueClamped(color);
     }
 
+    public static void SetCurrentMode(BroadcastBackgroundMode mode)
+    {
+        EnsureLoaded();
+        _currentMode = mode == BroadcastBackgroundMode.SolidColor
+            ? BroadcastBackgroundMode.SolidColor
+            : BroadcastBackgroundMode.BackgroundRemoval;
+    }
+
     public static void ApplyTo(Camera camera)
     {
         if (camera == null) return;
         camera.clearFlags = CameraClearFlags.SolidColor;
-        camera.backgroundColor = CurrentColor;
+        camera.backgroundColor = CurrentMode == BroadcastBackgroundMode.BackgroundRemoval
+            ? new Color(0f, 0f, 0f, 0f)
+            : CurrentColor;
+        if (camera.TryGetComponent(out BroadcastOutputController outputController))
+            outputController.ApplyPreviewSettings();
     }
 
     public static void Save()
@@ -48,6 +77,7 @@ public static class BroadcastBackgroundSettings
         PlayerPrefs.SetFloat(RedKey, _currentColor.r);
         PlayerPrefs.SetFloat(GreenKey, _currentColor.g);
         PlayerPrefs.SetFloat(BlueKey, _currentColor.b);
+        PlayerPrefs.SetInt(ModeKey, (int)_currentMode);
         PlayerPrefs.Save();
     }
 
@@ -60,6 +90,9 @@ public static class BroadcastBackgroundSettings
             PlayerPrefs.GetFloat(GreenKey, DefaultBackgroundColor.g),
             PlayerPrefs.GetFloat(BlueKey, DefaultBackgroundColor.b),
             1f));
+        _currentMode = PlayerPrefs.GetInt(ModeKey, 0) == (int)BroadcastBackgroundMode.SolidColor
+            ? BroadcastBackgroundMode.SolidColor
+            : BroadcastBackgroundMode.BackgroundRemoval;
     }
 
     private static Color OpaqueClamped(Color color)
@@ -892,6 +925,13 @@ public sealed class LiveAvatarController : MonoBehaviour
             BroadcastBackgroundSettings.ApplyTo(camera);
             camera.transform.position = target + new Vector3(0f, 0.03f, -distance);
             camera.transform.LookAt(target);
+
+            BroadcastPreviewCameraController previewController =
+                camera.GetComponent<BroadcastPreviewCameraController>();
+            if (previewController == null)
+                previewController = camera.gameObject.AddComponent<BroadcastPreviewCameraController>();
+            previewController.Initialize(camera);
+            previewController.SetHomePose(camera.transform.position, target, camera.fieldOfView);
         }
 
         if (FindFirstObjectByType<Light>() == null)

@@ -8,6 +8,13 @@ using UnityEngine;
 [Serializable]
 public struct TrackingPacket
 {
+  public const byte FaceTrackingFlag = 1;
+  public const byte HandTrackingFlag = 2;
+  public const byte PoseTrackingFlag = 4;
+  public const byte LeftArmReliableFlag = 8;
+  public const byte RightArmReliableFlag = 16;
+  public const byte ArmReliabilityMetadataFlag = 128;
+
   public Vector3 HeadRotation;
   public Vector3 HeadPosition;
   public Vector3 LeftArmRotation;  // 추가: 좌측 팔 회전
@@ -17,7 +24,26 @@ public struct TrackingPacket
   public float[] LeftFingerCurls;   // 추가: [5] (엄지~소지 굽힘도 0~1)
   public float[] RightFingerCurls;  // 추가: [5]
 
-  public byte    IsTracking; // 비트마스크 (0:None, 1:Face, 2:Hand, 4:Pose)
+  // 비트마스크: Face(1), Hand(2), Pose(4), LeftArm(8), RightArm(16), 팔 신뢰도 형식(128)
+  public byte    IsTracking;
+
+  public static bool HasFaceTracking(byte flags) => (flags & FaceTrackingFlag) != 0;
+
+  public static bool HasPoseTracking(byte flags) => (flags & PoseTrackingFlag) != 0;
+
+  public static bool HasLeftArmTracking(byte flags)
+  {
+    return (flags & ArmReliabilityMetadataFlag) != 0
+      ? (flags & LeftArmReliableFlag) != 0
+      : HasPoseTracking(flags);
+  }
+
+  public static bool HasRightArmTracking(byte flags)
+  {
+    return (flags & ArmReliabilityMetadataFlag) != 0
+      ? (flags & RightArmReliableFlag) != 0
+      : HasPoseTracking(flags);
+  }
 
   // ARKit BlendShape 이름 → 배열 인덱스 (iPhone 버전과 동일 키 사용)
   public static readonly Dictionary<string, int> BlendShapeIndex = new()

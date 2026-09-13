@@ -30,6 +30,8 @@ public static class KoreanUiFontProvider
 
 public sealed class WebcamControlPanel : MonoBehaviour
 {
+    private static readonly string[] BroadcastModeLabels = { "배경 제거", "단색 배경" };
+
     private enum SettingsPage
     {
         Camera,
@@ -68,6 +70,7 @@ public sealed class WebcamControlPanel : MonoBehaviour
     private GUIStyle _calibrationDetailStyle;
     private GUISkin _runtimeGuiSkin;
     private readonly GUIContent _trackingStatusContent = new();
+    private readonly GUIContent _trackingSummaryContent = new();
     private bool _armValidationRunning;
     private float _armValidationStartTime;
     private float _armValidationLostTime;
@@ -106,6 +109,7 @@ public sealed class WebcamControlPanel : MonoBehaviour
     private string _trackingSummarySource = string.Empty;
     private string _trackingSummary = string.Empty;
     private Color _broadcastBackgroundColor;
+    private BroadcastBackgroundMode _broadcastBackgroundMode;
     private bool _broadcastBackgroundDirty;
 
     private const float ArmValidationPhaseSeconds = 3f;
@@ -130,6 +134,7 @@ public sealed class WebcamControlPanel : MonoBehaviour
             ? _trackingPipeline.CalibrationNoticeRevision
             : 0;
         _broadcastBackgroundColor = BroadcastBackgroundSettings.CurrentColor;
+        _broadcastBackgroundMode = BroadcastBackgroundSettings.CurrentMode;
         BroadcastBackgroundSettings.ApplyTo(Camera.main);
         LoadTrackingOverlayPreferences();
         SyncAvatarValidationContext();
@@ -172,16 +177,16 @@ public sealed class WebcamControlPanel : MonoBehaviour
 
         DrawCalibrationGuide();
 
-        float panelWidth = Mathf.Min(380f, Screen.width - 24f);
-        float availablePanelHeight = Screen.height - 24f - GetTrackingOverlayReservedHeight();
-        float panelHeight = Mathf.Min(680f, Mathf.Max(140f, availablePanelHeight));
+        Rect controlPanelRect = GetControlPanelRect();
+        float panelWidth = controlPanelRect.width;
+        float panelHeight = controlPanelRect.height;
         float innerWidth = Mathf.Max(180f, panelWidth - 32f);
         float innerHeight = Mathf.Max(140f, panelHeight - 24f);
         const float paletteWidth = 42f;
         const float paletteGap = 6f;
         float pageWidth = Mathf.Max(132f, innerWidth - paletteWidth - paletteGap);
 
-        GUI.Box(new Rect(12f, 12f, panelWidth, panelHeight), GUIContent.none);
+        GUI.Box(controlPanelRect, GUIContent.none);
         GUILayout.BeginArea(new Rect(28f, 24f, pageWidth, innerHeight));
         GUILayout.Label("버추얼 아바타 스튜디오  (F1)", GUI.skin.box);
         string privacyStatus = _trackingPipeline == null
@@ -288,14 +293,54 @@ public sealed class WebcamControlPanel : MonoBehaviour
         GUI.enabled = true;
         GUILayout.Label("단축키: C");
 
+        DrawBroadcastCameraSettings();
         DrawBroadcastBackgroundSettings();
+    }
+
+    private void DrawBroadcastCameraSettings()
+    {
+        GUILayout.Space(8f);
+        GUILayout.Label("방송 미리보기 카메라", GUI.skin.box);
+        GUILayout.Label("좌 드래그: 이동 · 우 드래그: 중심 회전");
+        GUILayout.Label("휠: 확대/축소");
+
+        BroadcastPreviewCameraController previewController = GetBroadcastPreviewCameraController();
+        bool previousEnabled = GUI.enabled;
+        GUI.enabled = previousEnabled && previewController != null && previewController.HasHomePose;
+        if (GUILayout.Button("아바타 구도 초기화", GUILayout.Height(28f)))
+            previewController.ResetView();
+        GUI.enabled = previousEnabled;
+    }
+
+    private static BroadcastPreviewCameraController GetBroadcastPreviewCameraController()
+    {
+        Camera camera = Camera.main;
+        return camera != null ? camera.GetComponent<BroadcastPreviewCameraController>() : null;
     }
 
     private void DrawBroadcastBackgroundSettings()
     {
         GUILayout.Space(8f);
-        GUILayout.Label("송출 배경색", GUI.skin.box);
-        GUILayout.Label("OBS 크로마 키에 사용할 단색 배경입니다.");
+        GUILayout.Label("송출 배경", GUI.skin.box);
+
+        int selectedMode = GUILayout.SelectionGrid(
+            (int)_broadcastBackgroundMode,
+            BroadcastModeLabels,
+            2,
+            GUILayout.Height(28f));
+        if (selectedMode != (int)_broadcastBackgroundMode)
+            SetBroadcastBackgroundMode((BroadcastBackgroundMode)selectedMode);
+
+        if (_broadcastBackgroundMode == BroadcastBackgroundMode.BackgroundRemoval)
+        {
+            GUILayout.Label("송출 상태: 투명 배경 (Premultiplied Alpha)");
+            GUILayout.Label("아래 RGB는 운영 미리보기 배경에만 적용됩니다.");
+        }
+        else
+        {
+            GUILayout.Label("송출 상태: 불투명 단색 배경");
+            GUILayout.Label("아래 RGB가 미리보기와 실제 송출 배경에 적용됩니다.");
+        }
 
         GUILayout.BeginHorizontal();
         if (GUILayout.Button("기본색")) SetBroadcastBackgroundColor(BroadcastBackgroundSettings.DefaultColor, true);
@@ -346,6 +391,17 @@ public sealed class WebcamControlPanel : MonoBehaviour
         BroadcastBackgroundSettings.ApplyTo(Camera.main);
         _broadcastBackgroundDirty = true;
         if (saveImmediately) SaveBroadcastBackgroundColor();
+    }
+
+    private void SetBroadcastBackgroundMode(BroadcastBackgroundMode mode)
+    {
+        _broadcastBackgroundMode = mode == BroadcastBackgroundMode.SolidColor
+            ? BroadcastBackgroundMode.SolidColor
+            : BroadcastBackgroundMode.BackgroundRemoval;
+        BroadcastBackgroundSettings.SetCurrentMode(_broadcastBackgroundMode);
+        BroadcastBackgroundSettings.ApplyTo(Camera.main);
+        _broadcastBackgroundDirty = true;
+        SaveBroadcastBackgroundColor();
     }
 
     private void SaveBroadcastBackgroundColor()
@@ -905,41 +961,6 @@ public sealed class WebcamControlPanel : MonoBehaviour
         LoadTrackingOverlayPreferences();
         string status = _trackingPipeline.TrackingStatusText;
         float fontSize = Mathf.Clamp(Screen.height * 0.026f, 17f, 24f);
-        float width = Mathf.Min(620f, Mathf.Max(1f, Screen.width - TrackingOverlayMargin * 2f));
-
-        _trackingStatusStyle ??= new GUIStyle(GUI.skin.label)
-        {
-            alignment = TextAnchor.UpperLeft,
-            fontStyle = FontStyle.Bold,
-            wordWrap = true
-        };
-        _trackingStatusStyle.font = KoreanUiFontProvider.GuiFont;
-        _trackingStatusStyle.fontSize = Mathf.RoundToInt(fontSize);
-        _trackingStatusStyle.normal.textColor = Color.white;
-
-        float height = TrackingOverlayHeaderHeight;
-        if (!_trackingOverlayCollapsed)
-        {
-            _trackingStatusContent.text = status;
-            float contentWidth = width - 20f;
-            float contentHeight = _trackingStatusStyle.CalcHeight(_trackingStatusContent, contentWidth);
-            height += contentHeight + 18f;
-        }
-
-        UpdateTrackingOverlayRect(width, height);
-        HandleTrackingOverlayDragging();
-        Rect backgroundRect = _trackingOverlayRect;
-
-        int previousDepth = GUI.depth;
-        Color previousColor = GUI.color;
-        GUI.depth = -850;
-        GUI.color = new Color(0.02f, 0.03f, 0.06f, 0.78f);
-        GUI.DrawTexture(backgroundRect, Texture2D.whiteTexture);
-        GUI.color = new Color(0.04f, 0.12f, 0.16f, 0.96f);
-        GUI.DrawTexture(
-            new Rect(backgroundRect.x, backgroundRect.y, backgroundRect.width, TrackingOverlayHeaderHeight),
-            Texture2D.whiteTexture);
-        GUI.color = previousColor;
 
         _trackingOverlayHeaderStyle ??= new GUIStyle(GUI.skin.label)
         {
@@ -961,19 +982,82 @@ public sealed class WebcamControlPanel : MonoBehaviour
         _trackingOverlayToggleStyle.font = KoreanUiFontProvider.GuiFont;
 
         const float toggleWidth = 58f;
+        float maximumWidth = Mathf.Max(1f, Screen.width - TrackingOverlayMargin * 2f);
+        float width = Mathf.Min(620f, maximumWidth);
+        float headerHeight = TrackingOverlayHeaderHeight;
+        string headerText = "추적 상태 / 성능  ·  제목을 드래그해 이동";
+        if (_trackingOverlayCollapsed)
+        {
+            headerText = GetTrackingSummary(status);
+            _trackingSummaryContent.text = headerText;
+            float summaryWidth = _trackingOverlayHeaderStyle.CalcSize(_trackingSummaryContent).x;
+            float preferredWidth = Mathf.Ceil((summaryWidth + toggleWidth + 30f) / 20f) * 20f;
+            width = Mathf.Min(maximumWidth, Mathf.Max(width, preferredWidth));
+
+            float availableSummaryWidth = Mathf.Max(1f, width - toggleWidth - 20f);
+            bool wrapSummary = summaryWidth > availableSummaryWidth;
+            _trackingOverlayHeaderStyle.wordWrap = wrapSummary;
+            _trackingOverlayHeaderStyle.clipping = wrapSummary ? TextClipping.Overflow : TextClipping.Clip;
+            if (wrapSummary)
+            {
+                float summaryHeight = _trackingOverlayHeaderStyle.CalcHeight(
+                    _trackingSummaryContent,
+                    availableSummaryWidth);
+                headerHeight = Mathf.Max(TrackingOverlayHeaderHeight, summaryHeight + 8f);
+            }
+        }
+        else
+        {
+            _trackingOverlayHeaderStyle.wordWrap = false;
+            _trackingOverlayHeaderStyle.clipping = TextClipping.Clip;
+        }
+
+        _trackingStatusStyle ??= new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperLeft,
+            fontStyle = FontStyle.Bold,
+            wordWrap = true
+        };
+        _trackingStatusStyle.font = KoreanUiFontProvider.GuiFont;
+        _trackingStatusStyle.fontSize = Mathf.RoundToInt(fontSize);
+        _trackingStatusStyle.normal.textColor = Color.white;
+
+        float height = headerHeight;
+        if (!_trackingOverlayCollapsed)
+        {
+            _trackingStatusContent.text = status;
+            float contentWidth = width - 20f;
+            float contentHeight = _trackingStatusStyle.CalcHeight(_trackingStatusContent, contentWidth);
+            height += contentHeight + 18f;
+        }
+
+        UpdateTrackingOverlayRect(width, height);
+        HandleTrackingOverlayDragging(headerHeight);
+        Rect backgroundRect = _trackingOverlayRect;
+
+        int previousDepth = GUI.depth;
+        Color previousColor = GUI.color;
+        GUI.depth = -850;
+        GUI.color = new Color(0.02f, 0.03f, 0.06f, 0.78f);
+        GUI.DrawTexture(backgroundRect, Texture2D.whiteTexture);
+        GUI.color = new Color(0.04f, 0.12f, 0.16f, 0.96f);
+        GUI.DrawTexture(
+            new Rect(backgroundRect.x, backgroundRect.y, backgroundRect.width, headerHeight),
+            Texture2D.whiteTexture);
+        GUI.color = previousColor;
         Rect toggleRect = new(
             backgroundRect.xMax - toggleWidth - 5f,
-            backgroundRect.y + 4f,
+            backgroundRect.y + (headerHeight - TrackingOverlayHeaderHeight) * 0.5f + 4f,
             toggleWidth,
             TrackingOverlayHeaderHeight - 8f);
         Rect headerLabelRect = new(
             backgroundRect.x + 10f,
             backgroundRect.y,
             backgroundRect.width - toggleWidth - 20f,
-            TrackingOverlayHeaderHeight);
+            headerHeight);
         GUI.Label(
             headerLabelRect,
-            _trackingOverlayCollapsed ? GetTrackingSummary(status) : "추적 상태 / 성능  ·  제목을 드래그해 이동",
+            headerText,
             _trackingOverlayHeaderStyle);
 
         if (GUI.Button(
@@ -991,9 +1075,9 @@ public sealed class WebcamControlPanel : MonoBehaviour
             GUI.Label(
                 new Rect(
                     backgroundRect.x + 10f,
-                    backgroundRect.y + TrackingOverlayHeaderHeight + 7f,
+                    backgroundRect.y + headerHeight + 7f,
                     backgroundRect.width - 20f,
-                    backgroundRect.height - TrackingOverlayHeaderHeight - 14f),
+                    backgroundRect.height - headerHeight - 14f),
                 _trackingStatusContent,
                 _trackingStatusStyle);
         }
@@ -1008,7 +1092,7 @@ public sealed class WebcamControlPanel : MonoBehaviour
         bool hasStatus = _trackingPipeline != null &&
                          !string.IsNullOrEmpty(_trackingPipeline.TrackingStatusText);
         return hasStatus && _trackingOverlayCollapsed
-            ? TrackingOverlayHeaderHeight + TrackingOverlayPanelGap
+            ? Mathf.Max(TrackingOverlayHeaderHeight, _trackingOverlayRect.height) + TrackingOverlayPanelGap
             : 0f;
     }
 
@@ -1026,7 +1110,12 @@ public sealed class WebcamControlPanel : MonoBehaviour
     {
         float maxX = Mathf.Max(0f, Screen.width - width);
         float maxY = Mathf.Max(0f, Screen.height - height);
-        if (_trackingOverlayRect.width <= 0f || _trackingOverlayRect.height <= 0f)
+        bool positionNeedsRefresh =
+            _trackingOverlayRect.width <= 0f ||
+            _trackingOverlayRect.height <= 0f ||
+            !Mathf.Approximately(_trackingOverlayRect.width, width) ||
+            !Mathf.Approximately(_trackingOverlayRect.height, height);
+        if (positionNeedsRefresh && !_trackingOverlayDragging)
         {
             _trackingOverlayRect = new Rect(
                 _trackingOverlayNormalizedX * maxX,
@@ -1044,7 +1133,29 @@ public sealed class WebcamControlPanel : MonoBehaviour
         _trackingOverlayRect.y = Mathf.Clamp(_trackingOverlayRect.y, 0f, maxY);
     }
 
-    private void HandleTrackingOverlayDragging()
+    public bool IsPointerOverControlUi(Vector2 screenPosition)
+    {
+        Vector2 guiPosition = new(screenPosition.x, Screen.height - screenPosition.y);
+        if (_visible && GetControlPanelRect().Contains(guiPosition)) return true;
+
+        bool hasTrackingStatus = _trackingPipeline != null &&
+                                 !string.IsNullOrEmpty(_trackingPipeline.TrackingStatusText);
+        if (hasTrackingStatus && _trackingOverlayRect.Contains(guiPosition)) return true;
+
+        return _trackingPipeline != null &&
+               _trackingPipeline.TryGetWebcamPreviewGuiRect(out Rect previewRect) &&
+               previewRect.Contains(guiPosition);
+    }
+
+    private Rect GetControlPanelRect()
+    {
+        float panelWidth = Mathf.Min(380f, Screen.width - 24f);
+        float availablePanelHeight = Screen.height - 24f - GetTrackingOverlayReservedHeight();
+        float panelHeight = Mathf.Min(680f, Mathf.Max(140f, availablePanelHeight));
+        return new Rect(12f, 12f, panelWidth, panelHeight);
+    }
+
+    private void HandleTrackingOverlayDragging(float headerHeight)
     {
         Event currentEvent = Event.current;
         if (currentEvent == null) return;
@@ -1054,7 +1165,7 @@ public sealed class WebcamControlPanel : MonoBehaviour
             _trackingOverlayRect.x,
             _trackingOverlayRect.y,
             Mathf.Max(0f, _trackingOverlayRect.width - toggleWidth - 10f),
-            TrackingOverlayHeaderHeight);
+            headerHeight);
 
         if (currentEvent.type == EventType.MouseDown &&
             currentEvent.button == 0 &&

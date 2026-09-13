@@ -5,6 +5,8 @@ using UnityEngine;
 [DefaultExecutionOrder(1000)]
 public sealed class VRMMapper : MonoBehaviour
 {
+    private const float ArmTrackingHoldSeconds = 0.25f;
+
     public struct ArmMappingConfig
     {
         public bool SwapArms;
@@ -62,6 +64,8 @@ public sealed class VRMMapper : MonoBehaviour
     private bool _calibrationFrameReady;
     private bool _isCalibrated;
     private float _lastPacketTime;
+    private float _lastLeftArmTrackingTime = float.NegativeInfinity;
+    private float _lastRightArmTrackingTime = float.NegativeInfinity;
     private float _leftInputAngle;
     private float _rightInputAngle;
     private float _leftDeltaAngle;
@@ -84,7 +88,9 @@ public sealed class VRMMapper : MonoBehaviour
     public float LeftOutputAngle => _leftOutputAngle;
     public float RightOutputAngle => _rightOutputAngle;
     public bool HasTracking => _hasPacket &&
-                               (_latestPacket.IsTracking & 5) == 5 &&
+                               TrackingPacket.HasFaceTracking(_latestPacket.IsTracking) &&
+                               TrackingPacket.HasLeftArmTracking(_latestPacket.IsTracking) &&
+                               TrackingPacket.HasRightArmTracking(_latestPacket.IsTracking) &&
                                _calibrationFrameReady &&
                                Time.time - _lastPacketTime <= trackingTimeout;
 
@@ -115,6 +121,11 @@ public sealed class VRMMapper : MonoBehaviour
         _configKeyPrefix = BuildAvatarConfigKeyPrefix(avatarId);
         LoadArmConfig(useLegacyConfigAsInitial ? LegacyConfigKeyPrefix : _configKeyPrefix);
         RebuildNeutralArmRotations();
+        _hasPacket = false;
+        _calibrationFrameReady = false;
+        _isCalibrated = false;
+        _lastLeftArmTrackingTime = float.NegativeInfinity;
+        _lastRightArmTrackingTime = float.NegativeInfinity;
         _initialized = true;
         Debug.Log("[VRMMapper] Avatar bones initialized.");
         return true;
@@ -192,6 +203,10 @@ public sealed class VRMMapper : MonoBehaviour
         _calibrationFrameReady = calibrationFrameReady;
         _hasPacket = true;
         _lastPacketTime = Time.time;
+        if (TrackingPacket.HasLeftArmTracking(packet.IsTracking))
+            _lastLeftArmTrackingTime = Time.time;
+        if (TrackingPacket.HasRightArmTracking(packet.IsTracking))
+            _lastRightArmTrackingTime = Time.time;
     }
 
     public bool CalibrateNeutralPose()
@@ -228,14 +243,19 @@ public sealed class VRMMapper : MonoBehaviour
             return;
         }
 
-        bool hasFace = (_latestPacket.IsTracking & 1) != 0;
-        bool hasPose = (_latestPacket.IsTracking & 4) != 0;
+        bool hasFace = TrackingPacket.HasFaceTracking(_latestPacket.IsTracking);
+        bool leftArmTracked = TrackingPacket.HasLeftArmTracking(_latestPacket.IsTracking) ||
+                              Time.time - _lastLeftArmTrackingTime <= ArmTrackingHoldSeconds;
+        bool rightArmTracked = TrackingPacket.HasRightArmTracking(_latestPacket.IsTracking) ||
+                               Time.time - _lastRightArmTrackingTime <= ArmTrackingHoldSeconds;
         if (hasFace) ApplyHeadRotation(_latestPacket.HeadRotation);
         else ReturnHeadToNeutral();
 
-        if (hasPose)
-            ApplyArmRotations(_latestPacket.LeftArmRotation, _latestPacket.RightArmRotation);
-        else ReturnArmsToNeutral();
+        ApplyArmRotations(
+            _latestPacket.LeftArmRotation,
+            _latestPacket.RightArmRotation,
+            leftArmTracked,
+            rightArmTracked);
 
         if (enableApproximateExpressions && hasFace && _latestPacket.BlendShapeValues != null)
             LerpBlendShapes(_latestPacket.BlendShapeValues);
@@ -250,10 +270,16 @@ public sealed class VRMMapper : MonoBehaviour
         _neck.localRotation = Quaternion.Slerp(_neck.localRotation, target, SmoothingFactor());
     }
 
-    private void ApplyArmRotations(Vector3 leftEuler, Vector3 rightEuler)
+    private void ApplyArmRotations(
+        Vector3 leftEuler,
+        Vector3 rightEuler,
+        bool leftTracked,
+        bool rightTracked)
     {
         _leftInputAngle = swapArms ? rightEuler.z : leftEuler.z;
         _rightInputAngle = swapArms ? leftEuler.z : rightEuler.z;
+        bool mappedLeftTracked = swapArms ? rightTracked : leftTracked;
+        bool mappedRightTracked = swapArms ? leftTracked : rightTracked;
         float leftCalibration = swapArms ? _rightArmCalibrationAngle : _leftArmCalibrationAngle;
         float rightCalibration = swapArms ? _leftArmCalibrationAngle : _rightArmCalibrationAngle;
 
@@ -268,11 +294,11 @@ public sealed class VRMMapper : MonoBehaviour
 
         _leftArm.localRotation = Quaternion.Slerp(
             _leftArm.localRotation,
-            _neutralLeftArm * leftTracking,
+            mappedLeftTracked ? _neutralLeftArm * leftTracking : _neutralLeftArm,
             t);
         _rightArm.localRotation = Quaternion.Slerp(
             _rightArm.localRotation,
-            _neutralRightArm * rightTracking,
+            mappedRightTracked ? _neutralRightArm * rightTracking : _neutralRightArm,
             t);
     }
 

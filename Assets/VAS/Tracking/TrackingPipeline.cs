@@ -41,6 +41,16 @@ public class TrackingPipeline : MonoBehaviour
     private string _trackingStatusText = "카메라가 꺼져 있습니다. 카메라 시작을 누르세요.";
 
     private const float StatusRefreshInterval = 0.25f;
+    private const float PoseLandmarkConfidenceThreshold = 0.5f;
+    private const float PoseJointScreenMargin = 0.02f;
+    private const float ArmTrackingHoldSeconds = 0.25f;
+    private const float ShoulderReacquireSeconds = 0.35f;
+    private const float ShoulderMaxMidpointJumpRatio = 0.06f;
+    private const float ShoulderMaxAngleJumpDegrees = 18f;
+    private const float ShoulderMaxSpanChangeRatio = 0.25f;
+    private const float ArmReacquireMaxJumpDegrees = 35f;
+    private const int ArmJumpConfirmationFrames = 2;
+    private const float ArmJumpConsistencyDegrees = 25f;
     private const float RenderAverageAlpha = 0.02f;
     private const float InferenceAverageAlpha = 0.05f;
     private const int RenderWarmupSamples = 30;
@@ -88,6 +98,7 @@ public class TrackingPipeline : MonoBehaviour
     private Vector2[] _rHandPoints = new Vector2[21];
     private float _rHandTime = -1f;
     private Vector2[] _posePoints = new Vector2[33];
+    private bool[] _posePointReliable = new bool[33];
     private float _poseTime = -1f;
 
     // EMA Filters - Increased alpha for better responsiveness
@@ -97,12 +108,25 @@ public class TrackingPipeline : MonoBehaviour
 
     private Vector2 _leftArmDirection;
     private Vector2 _rightArmDirection;
-    private Vector2 _lastLeftArmRawDirection;
-    private Vector2 _lastRightArmRawDirection;
+    private Vector2 _leftArmJumpCandidate;
+    private Vector2 _rightArmJumpCandidate;
     private bool _leftArmDirectionInitialized;
     private bool _rightArmDirectionInitialized;
-    private int _leftArmRejectedFrames;
-    private int _rightArmRejectedFrames;
+    private int _leftArmJumpCandidateFrames;
+    private int _rightArmJumpCandidateFrames;
+    private float _leftArmLastReliableTime = float.NegativeInfinity;
+    private float _rightArmLastReliableTime = float.NegativeInfinity;
+    private string _leftArmTrackingStatus = "중립";
+    private string _rightArmTrackingStatus = "중립";
+    private Vector2 _stableShoulderMidpoint;
+    private Vector2 _stableShoulderAxis;
+    private Vector2 _shoulderCandidateMidpoint;
+    private Vector2 _shoulderCandidateAxis;
+    private bool _shoulderBaselineInitialized;
+    private bool _shoulderCandidateInitialized;
+    private bool _shoulderReacquiring = true;
+    private float _shoulderCandidateSince = float.NegativeInfinity;
+    private string _shoulderTrackingStatus = "재확인";
     private int _armInputRejectedCount;
 
     void Start()
@@ -115,7 +139,8 @@ public class TrackingPipeline : MonoBehaviour
             _currentPacket = new TrackingPacket {
                 BlendShapeValues = new float[52],
                 LeftFingerCurls  = new float[5],
-                RightFingerCurls = new float[5]
+                RightFingerCurls = new float[5],
+                IsTracking = TrackingPacket.ArmReliabilityMetadataFlag
             };
             
             InitializeWithoutStarting();
@@ -533,7 +558,10 @@ public class TrackingPipeline : MonoBehaviour
 
     private void UpdateFaceState(BlazeFaceDetector.FaceDetection face)
     {
-        if (face.IsValid) _currentPacket.IsTracking |= 1; else _currentPacket.IsTracking &= unchecked((byte)~1);
+        if (face.IsValid)
+            _currentPacket.IsTracking |= TrackingPacket.FaceTrackingFlag;
+        else
+            _currentPacket.IsTracking &= unchecked((byte)~TrackingPacket.FaceTrackingFlag);
         _faceStatus = face.IsValid ? "[얼굴] 감지됨" : "[얼굴] 놓침";
         if (face.IsValid && face.RawBoxes != null)
         {
@@ -547,8 +575,10 @@ public class TrackingPipeline : MonoBehaviour
 
     private async Awaitable UpdateHandState(BlazeHandDetector.HandDetection[] hands)
     {
-        if (hands != null && hands.Length > 0) _currentPacket.IsTracking |= 2; 
-        else _currentPacket.IsTracking &= unchecked((byte)~2);
+        if (hands != null && hands.Length > 0)
+            _currentPacket.IsTracking |= TrackingPacket.HandTrackingFlag;
+        else
+            _currentPacket.IsTracking &= unchecked((byte)~TrackingPacket.HandTrackingFlag);
 
         _handStatus = (hands != null && hands.Length > 0) ? $"[손] {hands.Length}개 감지됨" : "[손] 놓침";
         
@@ -576,35 +606,56 @@ public class TrackingPipeline : MonoBehaviour
 
     private async Awaitable UpdatePoseState(BlazePoseDetector.PoseDetection pose)
     {
-        if (pose.IsValid) _currentPacket.IsTracking |= 4; else _currentPacket.IsTracking &= unchecked((byte)~4);
-        _poseStatus = pose.IsValid ? "[포즈] 감지됨" : "[포즈] 놓침";
+        _currentPacket.IsTracking |= TrackingPacket.ArmReliabilityMetadataFlag;
+        if (pose.IsValid)
+            _currentPacket.IsTracking |= TrackingPacket.PoseTrackingFlag;
+        else
+            _currentPacket.IsTracking &= unchecked((byte)~TrackingPacket.PoseTrackingFlag);
+
         if (pose.IsValid)
         {
             var joints = await poseLandmarker.RunAsync(_cameraTexture, pose);
             RecordUpdateRate(ref _poseLandmarkerRate);
-            if (joints != null && joints.Length >= 15)
+            float[] visibilities = poseLandmarker.Visibilities;
+            float[] presences = poseLandmarker.Presences;
+            if (joints != null && joints.Length >= 15 &&
+                visibilities != null && visibilities.Length >= 15 &&
+                presences != null && presences.Length >= 15)
             {
                 _lastPoseJoints = joints; // ROI 힌트용 저장
-                _calibrationPoseReady = AreCalibrationJointsVisible(joints);
-                UpdatePoseData(joints);
-                UpdateLandmarkPoints(joints, _posePoints, ref _poseTime);
-                RecordUpdateRate(ref _poseApplicationRate);
+                bool shouldersStable = TryUpdateSharedShoulderBasis(joints, visibilities, presences);
+                _calibrationPoseReady = AreCalibrationJointsReliable(
+                    joints,
+                    visibilities,
+                    presences,
+                    shouldersStable);
+                bool applied = UpdatePoseData(joints, visibilities, presences, shouldersStable);
+                UpdatePoseLandmarkPoints(joints, visibilities, presences);
+                if (applied) RecordUpdateRate(ref _poseApplicationRate);
+                _poseStatus = $"[포즈] 감지됨 · 상체 {_shoulderTrackingStatus} · 좌팔 {_leftArmTrackingStatus} · 우팔 {_rightArmTrackingStatus} · 거부 {_armInputRejectedCount}";
             }
             else
             {
-                _currentPacket.IsTracking &= unchecked((byte)~4);
-                _poseStatus = "[포즈] 놓침";
-                _lastPoseJoints = null;
-                _calibrationPoseReady = false;
-                ResetArmDirectionFilters();
+                MarkPoseUnavailable("놓침");
             }
         }
         else
         {
-            _lastPoseJoints = null;
-            _calibrationPoseReady = false;
-            ResetArmDirectionFilters();
+            MarkPoseUnavailable("놓침");
         }
+    }
+
+    private void MarkPoseUnavailable(string reason)
+    {
+        _currentPacket.IsTracking &= unchecked((byte)~TrackingPacket.PoseTrackingFlag);
+        _lastPoseJoints = null;
+        _calibrationPoseReady = false;
+        BeginShoulderReacquisition();
+        ClearArmJumpCandidates();
+        MarkLeftArmUnavailable(countAsRejectedInput: false);
+        MarkRightArmUnavailable(countAsRejectedInput: false);
+        System.Array.Clear(_posePointReliable, 0, _posePointReliable.Length);
+        _poseStatus = $"[포즈] {reason} · 상체 {_shoulderTrackingStatus} · 좌팔 {_leftArmTrackingStatus} · 우팔 {_rightArmTrackingStatus} · 거부 {_armInputRejectedCount}";
     }
 
     private readonly List<UnityEngine.UI.Image> _pointPool = new();
@@ -703,17 +754,26 @@ public class TrackingPipeline : MonoBehaviour
         if (now - _poseTime < timeout)
         {
             // Compact upper-body skeleton: shoulders and elbows are sufficient in a narrow room.
-            SetBone(_posePoints[11], _posePoints[12], PoseSkeletonColor);
-            SetBone(_posePoints[11], _posePoints[13], PoseSkeletonColor);
-            SetBone(_posePoints[12], _posePoints[14], PoseSkeletonColor);
-            for (int i = 11; i <= 14; i++) SetPoint(_posePoints[i], PoseSkeletonColor);
+            SetReliablePoseBone(11, 12);
+            SetReliablePoseBone(11, 13);
+            SetReliablePoseBone(12, 14);
+            for (int i = 11; i <= 14; i++)
+            {
+                if (_posePointReliable[i]) SetPoint(_posePoints[i], PoseSkeletonColor);
+            }
 
-            if (now - _faceTime < timeout)
+            if (now - _faceTime < timeout && _posePointReliable[11] && _posePointReliable[12])
             {
                 Vector2 shoulderCenter = (_posePoints[11] + _posePoints[12]) * 0.5f;
                 SetBone(_facePoints[2], shoulderCenter, PoseSkeletonColor);
             }
         }
+    }
+
+    private void SetReliablePoseBone(int startIndex, int endIndex)
+    {
+        if (!_posePointReliable[startIndex] || !_posePointReliable[endIndex]) return;
+        SetBone(_posePoints[startIndex], _posePoints[endIndex], PoseSkeletonColor);
     }
 
     private void SetPoint(Vector2 normPos, Color color)
@@ -813,42 +873,81 @@ public class TrackingPipeline : MonoBehaviour
         _activeBoneCount = 0;
     }
 
-    private void UpdatePoseData(Vector3[] joints)
+    private bool UpdatePoseData(
+        Vector3[] joints,
+        float[] visibilities,
+        float[] presences,
+        bool shouldersStable)
     {
         var leftShoulder   = joints[11];
         var rightShoulder  = joints[12];
         var lElbow         = joints[13];
         var rElbow         = joints[14];
 
+        if (!shouldersStable)
+        {
+            ClearArmJumpCandidates();
+            MarkLeftArmUnavailable(countAsRejectedInput: false);
+            MarkRightArmUnavailable(countAsRejectedInput: false);
+            _armInputRejectedCount++;
+            return false;
+        }
+
         Vector2 leftArmVector = new Vector2(lElbow.x - leftShoulder.x, lElbow.y - leftShoulder.y);
         Vector2 rightArmVector = new Vector2(rElbow.x - rightShoulder.x, rElbow.y - rightShoulder.y);
+        bool leftInputReliable = IsPoseJointReliable(joints, visibilities, presences, 13);
+        bool rightInputReliable = IsPoseJointReliable(joints, visibilities, presences, 14);
         GetArmInputFilterSettings(out float smoothing, out float maxInputJump);
 
-        if (TryFilterArmDirection(
+        float leftAngle = 0f;
+        bool leftReacquiring = _leftArmTrackingStatus != "정상";
+        bool leftApplied = leftInputReliable && TryFilterArmDirection(
                 leftArmVector,
                 smoothing,
-                maxInputJump,
+                leftReacquiring ? Mathf.Min(maxInputJump, ArmReacquireMaxJumpDegrees) : maxInputJump,
                 ref _leftArmDirection,
-                ref _lastLeftArmRawDirection,
+                ref _leftArmJumpCandidate,
                 ref _leftArmDirectionInitialized,
-                ref _leftArmRejectedFrames,
-                out float leftAngle))
+                ref _leftArmJumpCandidateFrames,
+                out leftAngle);
+        if (leftApplied)
         {
             _currentPacket.LeftArmRotation = new Vector3(0f, 0f, leftAngle);
+            _currentPacket.IsTracking |= TrackingPacket.LeftArmReliableFlag;
+            _leftArmLastReliableTime = Time.unscaledTime;
+            _leftArmTrackingStatus = "정상";
+        }
+        else
+        {
+            if (!leftInputReliable) _leftArmJumpCandidateFrames = 0;
+            MarkLeftArmUnavailable(countAsRejectedInput: true);
         }
 
-        if (TryFilterArmDirection(
+        float rightAngle = 0f;
+        bool rightReacquiring = _rightArmTrackingStatus != "정상";
+        bool rightApplied = rightInputReliable && TryFilterArmDirection(
                 rightArmVector,
                 smoothing,
-                maxInputJump,
+                rightReacquiring ? Mathf.Min(maxInputJump, ArmReacquireMaxJumpDegrees) : maxInputJump,
                 ref _rightArmDirection,
-                ref _lastRightArmRawDirection,
+                ref _rightArmJumpCandidate,
                 ref _rightArmDirectionInitialized,
-                ref _rightArmRejectedFrames,
-                out float rightAngle))
+                ref _rightArmJumpCandidateFrames,
+                out rightAngle);
+        if (rightApplied)
         {
             _currentPacket.RightArmRotation = new Vector3(0f, 0f, rightAngle);
+            _currentPacket.IsTracking |= TrackingPacket.RightArmReliableFlag;
+            _rightArmLastReliableTime = Time.unscaledTime;
+            _rightArmTrackingStatus = "정상";
         }
+        else
+        {
+            if (!rightInputReliable) _rightArmJumpCandidateFrames = 0;
+            MarkRightArmUnavailable(countAsRejectedInput: true);
+        }
+
+        return leftApplied || rightApplied;
     }
 
     private void Update()
@@ -880,9 +979,9 @@ public class TrackingPipeline : MonoBehaviour
         float smoothing,
         float maxInputJump,
         ref Vector2 filteredDirection,
-        ref Vector2 lastRawDirection,
+        ref Vector2 jumpCandidate,
         ref bool initialized,
-        ref int rejectedFrames,
+        ref int jumpCandidateFrames,
         out float angle)
     {
         angle = 0f;
@@ -891,45 +990,47 @@ public class TrackingPipeline : MonoBehaviour
             : 8f;
         if (armVector.sqrMagnitude < minimumLength * minimumLength)
         {
-            if (!initialized) return false;
-            angle = DirectionToAngle(filteredDirection);
-            return true;
+            return false;
         }
 
         Vector2 rawDirection = armVector.normalized;
         if (!initialized)
         {
             filteredDirection = rawDirection;
-            lastRawDirection = rawDirection;
             initialized = true;
-            rejectedFrames = 0;
+            jumpCandidateFrames = 0;
             angle = DirectionToAngle(filteredDirection);
             return true;
         }
 
-        float inputJump = Vector2.Angle(lastRawDirection, rawDirection);
-        if (inputJump > maxInputJump && rejectedFrames < 2)
-        {
-            rejectedFrames++;
-            _armInputRejectedCount++;
-            angle = DirectionToAngle(filteredDirection);
-            return true;
-        }
-
+        float inputJump = Vector2.Angle(filteredDirection, rawDirection);
         if (inputJump > maxInputJump)
-            filteredDirection = rawDirection;
-        else
-            filteredDirection = Vector2.Lerp(filteredDirection, rawDirection, smoothing);
+        {
+            if (jumpCandidateFrames == 0 || Vector2.Angle(jumpCandidate, rawDirection) > ArmJumpConsistencyDegrees)
+            {
+                jumpCandidate = rawDirection;
+                jumpCandidateFrames = 1;
+            }
+            else
+            {
+                jumpCandidate = Vector2.Lerp(jumpCandidate, rawDirection, 0.5f).normalized;
+                jumpCandidateFrames++;
+            }
+
+            if (jumpCandidateFrames < ArmJumpConfirmationFrames) return false;
+
+            rawDirection = jumpCandidate;
+        }
+
+        filteredDirection = Vector2.Lerp(filteredDirection, rawDirection, smoothing);
+        jumpCandidateFrames = 0;
 
         if (filteredDirection.sqrMagnitude < 0.0001f)
         {
-            angle = DirectionToAngle(lastRawDirection);
-            return true;
+            return false;
         }
 
         filteredDirection.Normalize();
-        lastRawDirection = rawDirection;
-        rejectedFrames = 0;
         angle = DirectionToAngle(filteredDirection);
         return true;
     }
@@ -941,31 +1042,236 @@ public class TrackingPipeline : MonoBehaviour
 
     private void ResetArmDirectionFilters()
     {
-        _leftArmDirectionInitialized = false;
-        _rightArmDirectionInitialized = false;
-        _leftArmRejectedFrames = 0;
-        _rightArmRejectedFrames = 0;
+        ResetLeftArmDirectionFilter();
+        ResetRightArmDirectionFilter();
+        ResetShoulderStabilityFilter();
+        _leftArmTrackingStatus = "중립";
+        _rightArmTrackingStatus = "중립";
+        _currentPacket.IsTracking |= TrackingPacket.ArmReliabilityMetadataFlag;
+        _currentPacket.IsTracking &= unchecked((byte)~(
+            TrackingPacket.LeftArmReliableFlag |
+            TrackingPacket.RightArmReliableFlag |
+            TrackingPacket.PoseTrackingFlag));
     }
 
-    private bool AreCalibrationJointsVisible(Vector3[] joints)
+    private void ResetLeftArmDirectionFilter()
+    {
+        _leftArmDirectionInitialized = false;
+        _leftArmJumpCandidateFrames = 0;
+        _leftArmLastReliableTime = float.NegativeInfinity;
+    }
+
+    private void ResetRightArmDirectionFilter()
+    {
+        _rightArmDirectionInitialized = false;
+        _rightArmJumpCandidateFrames = 0;
+        _rightArmLastReliableTime = float.NegativeInfinity;
+    }
+
+    private void MarkLeftArmUnavailable(bool countAsRejectedInput)
+    {
+        _currentPacket.IsTracking &= unchecked((byte)~TrackingPacket.LeftArmReliableFlag);
+        if (countAsRejectedInput) _armInputRejectedCount++;
+        if (_leftArmDirectionInitialized &&
+            Time.unscaledTime - _leftArmLastReliableTime <= ArmTrackingHoldSeconds)
+        {
+            _leftArmTrackingStatus = "유지";
+            return;
+        }
+
+        _leftArmTrackingStatus = "중립";
+    }
+
+    private void MarkRightArmUnavailable(bool countAsRejectedInput)
+    {
+        _currentPacket.IsTracking &= unchecked((byte)~TrackingPacket.RightArmReliableFlag);
+        if (countAsRejectedInput) _armInputRejectedCount++;
+        if (_rightArmDirectionInitialized &&
+            Time.unscaledTime - _rightArmLastReliableTime <= ArmTrackingHoldSeconds)
+        {
+            _rightArmTrackingStatus = "유지";
+            return;
+        }
+
+        _rightArmTrackingStatus = "중립";
+    }
+
+    private void ClearArmJumpCandidates()
+    {
+        _leftArmJumpCandidateFrames = 0;
+        _rightArmJumpCandidateFrames = 0;
+    }
+
+    private bool TryUpdateSharedShoulderBasis(
+        Vector3[] joints,
+        float[] visibilities,
+        float[] presences)
+    {
+        bool inputReliable = IsPoseJointReliable(joints, visibilities, presences, 11) &&
+                             IsPoseJointReliable(joints, visibilities, presences, 12) &&
+                             HasReliableShoulderSpan(joints[11], joints[12]);
+        if (!inputReliable)
+        {
+            BeginShoulderReacquisition();
+            return false;
+        }
+
+        Vector2 leftShoulder = new(joints[11].x, joints[11].y);
+        Vector2 rightShoulder = new(joints[12].x, joints[12].y);
+        Vector2 midpoint = (leftShoulder + rightShoulder) * 0.5f;
+        Vector2 axis = rightShoulder - leftShoulder;
+
+        if (!_shoulderReacquiring && _shoulderBaselineInitialized)
+        {
+            if (IsShoulderTransitionStable(
+                    _stableShoulderMidpoint,
+                    _stableShoulderAxis,
+                    midpoint,
+                    axis))
+            {
+                _stableShoulderMidpoint = midpoint;
+                _stableShoulderAxis = axis;
+                _shoulderTrackingStatus = "정상";
+                return true;
+            }
+
+            BeginShoulderReacquisition();
+        }
+
+        if (!_shoulderCandidateInitialized ||
+            !IsShoulderTransitionStable(
+                _shoulderCandidateMidpoint,
+                _shoulderCandidateAxis,
+                midpoint,
+                axis))
+        {
+            _shoulderCandidateMidpoint = midpoint;
+            _shoulderCandidateAxis = axis;
+            _shoulderCandidateSince = Time.unscaledTime;
+            _shoulderCandidateInitialized = true;
+            _shoulderTrackingStatus = "재확인";
+            return false;
+        }
+
+        _shoulderCandidateMidpoint = midpoint;
+        _shoulderCandidateAxis = axis;
+        if (Time.unscaledTime - _shoulderCandidateSince < ShoulderReacquireSeconds)
+        {
+            _shoulderTrackingStatus = "재확인";
+            return false;
+        }
+
+        _stableShoulderMidpoint = midpoint;
+        _stableShoulderAxis = axis;
+        _shoulderBaselineInitialized = true;
+        _shoulderCandidateInitialized = false;
+        _shoulderReacquiring = false;
+        _shoulderTrackingStatus = "정상";
+        return true;
+    }
+
+    private bool IsShoulderTransitionStable(
+        Vector2 previousMidpoint,
+        Vector2 previousAxis,
+        Vector2 currentMidpoint,
+        Vector2 currentAxis)
+    {
+        if (_cameraTexture == null || previousAxis.sqrMagnitude < 1f || currentAxis.sqrMagnitude < 1f)
+            return false;
+
+        float referenceSize = Mathf.Min(_cameraTexture.width, _cameraTexture.height);
+        float midpointJumpRatio = Vector2.Distance(previousMidpoint, currentMidpoint) / referenceSize;
+        float angleJump = Vector2.Angle(previousAxis, currentAxis);
+        float spanChangeRatio = Mathf.Abs(currentAxis.magnitude - previousAxis.magnitude) /
+                                Mathf.Max(previousAxis.magnitude, 1f);
+        return midpointJumpRatio <= ShoulderMaxMidpointJumpRatio &&
+               angleJump <= ShoulderMaxAngleJumpDegrees &&
+               spanChangeRatio <= ShoulderMaxSpanChangeRatio;
+    }
+
+    private void BeginShoulderReacquisition()
+    {
+        _shoulderReacquiring = true;
+        _shoulderCandidateInitialized = false;
+        _shoulderCandidateSince = float.NegativeInfinity;
+        _shoulderTrackingStatus = "재확인";
+    }
+
+    private void ResetShoulderStabilityFilter()
+    {
+        _shoulderBaselineInitialized = false;
+        _stableShoulderMidpoint = Vector2.zero;
+        _stableShoulderAxis = Vector2.zero;
+        BeginShoulderReacquisition();
+    }
+
+    private void UpdatePoseLandmarkPoints(Vector3[] joints, float[] visibilities, float[] presences)
+    {
+        if (_cameraTexture == null || joints == null) return;
+
+        int count = Mathf.Min(joints.Length, _posePoints.Length);
+        for (int i = 0; i < count; i++)
+        {
+            _posePoints[i] = new Vector2(
+                joints[i].x / _cameraTexture.width,
+                joints[i].y / _cameraTexture.height);
+            _posePointReliable[i] = IsPoseJointReliable(joints, visibilities, presences, i);
+        }
+
+        for (int i = count; i < _posePointReliable.Length; i++) _posePointReliable[i] = false;
+        _poseTime = Time.time;
+    }
+
+    private bool AreCalibrationJointsReliable(
+        Vector3[] joints,
+        float[] visibilities,
+        float[] presences,
+        bool shouldersStable)
     {
         if (_cameraTexture == null || joints == null || joints.Length < 15) return false;
 
-        const float margin = 0.02f;
-        float minX = _cameraTexture.width * margin;
-        float maxX = _cameraTexture.width * (1f - margin);
-        float minY = _cameraTexture.height * margin;
-        float maxY = _cameraTexture.height * (1f - margin);
+        return shouldersStable &&
+               IsPoseJointReliable(joints, visibilities, presences, 13) &&
+               IsPoseJointReliable(joints, visibilities, presences, 14) &&
+               HasReliableShoulderSpan(joints[11], joints[12]);
+    }
 
-        int[] required = { 11, 12, 13, 14 };
-        foreach (int index in required)
-        {
-            Vector3 point = joints[index];
-            if (point.x < minX || point.x > maxX || point.y < minY || point.y > maxY)
-                return false;
-        }
+    private bool IsPoseJointReliable(
+        Vector3[] joints,
+        float[] visibilities,
+        float[] presences,
+        int index)
+    {
+        if (_cameraTexture == null || joints == null || visibilities == null || presences == null ||
+            index < 0 || index >= joints.Length || index >= visibilities.Length || index >= presences.Length)
+            return false;
 
-        return Vector3.Distance(joints[11], joints[12]) > _cameraTexture.width * 0.08f;
+        Vector3 point = joints[index];
+        if (!IsFinite(point.x) || !IsFinite(point.y) || !IsFinite(point.z) ||
+            !IsFinite(visibilities[index]) || !IsFinite(presences[index]))
+            return false;
+        if (visibilities[index] < PoseLandmarkConfidenceThreshold ||
+            presences[index] < PoseLandmarkConfidenceThreshold)
+            return false;
+
+        float minX = _cameraTexture.width * PoseJointScreenMargin;
+        float maxX = _cameraTexture.width * (1f - PoseJointScreenMargin);
+        float minY = _cameraTexture.height * PoseJointScreenMargin;
+        float maxY = _cameraTexture.height * (1f - PoseJointScreenMargin);
+        return point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY;
+    }
+
+    private bool HasReliableShoulderSpan(Vector3 leftShoulder, Vector3 rightShoulder)
+    {
+        if (_cameraTexture == null) return false;
+        return Vector2.Distance(
+            new Vector2(leftShoulder.x, leftShoulder.y),
+            new Vector2(rightShoulder.x, rightShoulder.y)) > _cameraTexture.width * 0.08f;
+    }
+
+    private static bool IsFinite(float value)
+    {
+        return !float.IsNaN(value) && !float.IsInfinity(value);
     }
 
     private void ValidateComponents()
@@ -1274,7 +1580,9 @@ public class TrackingPipeline : MonoBehaviour
         sample = default;
         if (avatarController == null || !avatarController.HasArmMappingConfig) return false;
 
-        sample.PoseTracked = (_currentPacket.IsTracking & 4) != 0 && _calibrationPoseReady;
+        sample.PoseTracked = TrackingPacket.HasLeftArmTracking(_currentPacket.IsTracking) &&
+                             TrackingPacket.HasRightArmTracking(_currentPacket.IsTracking) &&
+                             _calibrationPoseReady;
         sample.Calibrated = avatarController.IsAvatarCalibrated;
         sample.LeftInput = avatarController.LeftArmInputAngle;
         sample.RightInput = avatarController.RightArmInputAngle;

@@ -17,6 +17,8 @@ public class BlazePoseLandmarkRunner : MonoBehaviour
 
     // 공개 결과 캐시 (TrackingPipeline에서 직접 접근 가능)
     public Vector3[] Joints { get; private set; } = new Vector3[33];
+    public float[] Visibilities { get; private set; } = new float[33];
+    public float[] Presences { get; private set; } = new float[33];
 
     void Start()
     {
@@ -30,7 +32,7 @@ public class BlazePoseLandmarkRunner : MonoBehaviour
         WebCamTexture texture,
         BlazePoseDetector.PoseDetection detection)
     {
-        if (_worker == null || _inputTensor == null) return Joints;
+        if (_worker == null || _inputTensor == null) return null;
 
         // kp1(엉덩이), kp2(어깨) 두 점으로 회전 정렬 크롭 행렬 계산
         var kp1 = BlazeUtils.mul(detection.DetectorMatrix, detection.Keypoint1);
@@ -60,14 +62,16 @@ public class BlazePoseLandmarkRunner : MonoBehaviour
         // 출력: 주요 텐서는 output(0) = world_landmarks or pose_landmarks
         // shape: (1, 33, 5) 또는 (1, 165) — 모델에 따라 다름
         var t0 = _worker.PeekOutput(0);
-        if (t0 == null) return Joints;
+        if (t0 == null) return null;
 
         try
         {
             using var output = await t0.ReadbackAndCloneAsync() as Tensor<float>;
-            if (output == null) return Joints;
+            if (output == null) return null;
 
             var joints = new Vector3[33];
+            var visibilities = new float[33];
+            var presences = new float[33];
             int rank   = output.shape.rank;
 
             if (rank == 2)
@@ -77,6 +81,8 @@ public class BlazePoseLandmarkRunner : MonoBehaviour
                 {
                     var pos = BlazeUtils.mul(M2, new float2(output[0, i * 5], output[0, i * 5 + 1]));
                     joints[i] = new Vector3(pos.x, pos.y, output[0, i * 5 + 2]);
+                    visibilities[i] = output[0, i * 5 + 3];
+                    presences[i] = output[0, i * 5 + 4];
                 }
             }
             else if (rank == 3)
@@ -86,15 +92,23 @@ public class BlazePoseLandmarkRunner : MonoBehaviour
                 {
                     var pos = BlazeUtils.mul(M2, new float2(output[0, i, 0], output[0, i, 1]));
                     joints[i] = new Vector3(pos.x, pos.y, output[0, i, 2]);
+                    visibilities[i] = output[0, i, 3];
+                    presences[i] = output[0, i, 4];
                 }
+            }
+            else
+            {
+                return null;
             }
 
             Joints = joints;
+            Visibilities = visibilities;
+            Presences = presences;
             return joints;
         }
         catch (System.NullReferenceException) when (_disposed || !Application.isPlaying)
         {
-            return Joints;
+            return null;
         }
     }
 
